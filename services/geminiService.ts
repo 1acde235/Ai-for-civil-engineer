@@ -22,32 +22,66 @@ const getApiKey = (): string => {
 
 // --- HELPER: ROBUST JSON PARSER WITH AUTO-REPAIR ---
 const safeJsonParse = (input: string): any => {
+    // 1. Clean Markdown wrappers
     let clean = input.replace(/```json/g, '').replace(/```/g, '').trim();
-    const firstBrace = clean.indexOf('{');
-    const lastBrace = clean.lastIndexOf('}');
     
-    if (firstBrace !== -1) {
-        clean = clean.substring(firstBrace, lastBrace !== -1 ? lastBrace + 1 : undefined);
+    // 2. Heuristic: Find first { or [
+    const firstBrace = clean.indexOf('{');
+    const firstBracket = clean.indexOf('[');
+    let startIdx = 0;
+    if (firstBrace !== -1 && firstBracket !== -1) {
+        startIdx = Math.min(firstBrace, firstBracket);
+    } else if (firstBrace !== -1) {
+        startIdx = firstBrace;
+    } else if (firstBracket !== -1) {
+        startIdx = firstBracket;
     }
+    clean = clean.substring(startIdx);
 
+    // 3. Try standard parse
     try {
         return JSON.parse(clean);
     } catch (e) {
-        console.warn("JSON Parse failed (likely truncated). Attempting auto-repair...");
-        clean = clean.replace(/,\s*$/, '');
+        console.warn("JSON Parse failed (likely truncated). Attempting advanced auto-repair...");
         
-        const stack = [];
+        // 4. Advanced State Machine to track open strings and brackets
+        let inString = false;
+        let isEscaped = false;
+        const stack: string[] = [];
+        
         for (const char of clean) {
-            if (char === '{') { stack.push('}'); }
-            else if (char === '[') { stack.push(']'); }
-            else if (char === '}') { 
-                if (stack.length > 0 && stack[stack.length - 1] === '}') stack.pop(); 
-            }
-            else if (char === ']') { 
-                if (stack.length > 0 && stack[stack.length - 1] === ']') stack.pop(); 
+            if (inString) {
+                if (char === '\\' && !isEscaped) {
+                    isEscaped = true;
+                } else if (char === '"' && !isEscaped) {
+                    inString = false;
+                } else {
+                    isEscaped = false;
+                }
+            } else {
+                if (char === '"') {
+                    inString = true;
+                } else if (char === '{') {
+                    stack.push('}');
+                } else if (char === '[') {
+                    stack.push(']');
+                } else if (char === '}') {
+                    if (stack.length > 0 && stack[stack.length - 1] === '}') stack.pop();
+                } else if (char === ']') {
+                    if (stack.length > 0 && stack[stack.length - 1] === ']') stack.pop();
+                }
             }
         }
 
+        // 5. Close open string if truncation happened inside a value
+        if (inString) {
+            clean += '"';
+        }
+
+        // 6. Remove trailing comma (common if truncated after a field)
+        clean = clean.replace(/,\s*$/, '');
+
+        // 7. Close remaining open brackets in reverse order
         while (stack.length > 0) {
             clean += stack.pop();
         }
@@ -516,6 +550,7 @@ export const generateSchedule = async (
         **OUTPUT FORMAT**:
         Return strictly valid JSON matching the schema. 
         For Building projects with multiple floors, generate the 'Typical Floor' tasks using '3.X' in the taskId (e.g., 3.X.1, 3.X.1.1). The system will auto-replicate this for all ${floorCount} floors.
+        Do not output Markdown code blocks. Keep descriptions concise.
     `;
 
     // CALL AI WITH FALLBACK LOGIC
@@ -823,7 +858,7 @@ export const generateTakeoff = async (
     
     ${rebarInstruction}
     ${contractBase64Data ? "**MATCHING**: Map items to Contract BOQ." : ""}
-    Output strictly valid JSON.
+    Output strictly valid JSON. Do not include markdown formatting. Keep descriptions concise.
   `;
 
   // CALL AI WITH FALLBACK LOGIC

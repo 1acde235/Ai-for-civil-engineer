@@ -1575,6 +1575,164 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
              </div>
           )}
 
+          {/* TAB 4: PAYMENT CERTIFICATE (ADDED) */}
+          {activeTab === 'payment' && appMode === AppMode.PAYMENT && (
+             <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-4xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
+               <div className="p-8 bg-white border-b border-slate-200">
+                 <div className="text-center mb-8">
+                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-widest border-b-4 border-slate-900 inline-block pb-2">
+                        {isFinalAccount ? "Final Payment Certificate" : "Interim Payment Certificate"}
+                    </h2>
+                    <p className="text-sm font-mono mt-2 text-slate-500">Certificate No: {certMeta.certNo}</p>
+                 </div>
+                 {renderMetaInputs('light')}
+                 <div className="flex justify-between items-center text-xs text-slate-500 mt-4 border-t border-dashed border-slate-200 pt-4">
+                     <div>
+                         <label className="font-bold uppercase mr-2">Valuation Date:</label>
+                         <input type="date" value={certMeta.valuationDate} onChange={(e) => setCertMeta({...certMeta, valuationDate: e.target.value})} className="bg-transparent border-b border-slate-300 font-mono" />
+                     </div>
+                     <div>
+                         <label className="font-bold uppercase mr-2">Cert No:</label>
+                         <input type="text" value={certMeta.certNo} onChange={(e) => setCertMeta({...certMeta, certNo: e.target.value})} className="bg-transparent border-b border-slate-300 font-mono w-12 text-center" />
+                     </div>
+                 </div>
+               </div>
+               
+               <div className="p-8">
+                   <table className="w-full text-sm border-collapse border border-slate-300">
+                       <thead className="bg-slate-100 text-slate-900 uppercase tracking-wider text-xs">
+                           <tr>
+                               <th className="border border-slate-300 p-3 text-left">Description</th>
+                               <th className="border border-slate-300 p-3 text-right w-48">Amount ({projectCurrency})</th>
+                           </tr>
+                       </thead>
+                       <tbody className="font-mono text-slate-700">
+                           {/* Gross Value */}
+                           <tr>
+                               <td className="border border-slate-300 p-3 font-bold text-slate-800">Gross Value of Work Executed</td>
+                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-900">
+                                   {workExecutedCumulative.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                               </td>
+                           </tr>
+                           
+                           {/* Retention */}
+                           <tr>
+                               <td className="border border-slate-300 p-3 flex items-center justify-between">
+                                   <span>Less: Retention</span>
+                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
+                                       <input 
+                                           type="number" 
+                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
+                                           value={retentionPct}
+                                           onChange={(e) => setRetentionPct(parseFloat(e.target.value)||0)}
+                                       />
+                                       <span className="text-xs text-slate-500 ml-1">%</span>
+                                   </div>
+                                   <span className="hidden print:inline font-normal text-slate-500">({retentionPct}%)</span>
+                               </td>
+                               <td className="border border-slate-300 p-3 text-right text-red-600">
+                                   ({retentionAmount.toLocaleString(undefined, {minimumFractionDigits: 2})})
+                               </td>
+                           </tr>
+
+                           {/* Advance Recovery */}
+                           <tr>
+                               <td className="border border-slate-300 p-3 flex items-center justify-between">
+                                   <span>Less: Advance Recovery</span>
+                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
+                                       <span className="text-xs text-slate-500 mr-1">{projectCurrency}</span>
+                                       <input 
+                                           type="number" 
+                                           className="w-24 bg-transparent text-right font-mono text-xs outline-none font-bold"
+                                           value={advanceRecovery}
+                                           onChange={(e) => setAdvanceRecovery(parseFloat(e.target.value)||0)}
+                                       />
+                                   </div>
+                               </td>
+                               <td className="border border-slate-300 p-3 text-right text-red-600">
+                                   ({advanceRecovery.toLocaleString(undefined, {minimumFractionDigits: 2})})
+                               </td>
+                           </tr>
+
+                           {/* Net Value */}
+                           <tr className="bg-slate-50 font-bold">
+                               <td className="border border-slate-300 p-3">Net Valuation</td>
+                               <td className="border border-slate-300 p-3 text-right">
+                                   {netValuation.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                               </td>
+                           </tr>
+
+                           {/* VAT */}
+                           <tr>
+                               <td className="border border-slate-300 p-3 flex items-center justify-between">
+                                   <span>Add: VAT</span>
+                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
+                                       <input 
+                                           type="number" 
+                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
+                                           value={vatPct}
+                                           onChange={(e) => setVatPct(parseFloat(e.target.value)||0)}
+                                       />
+                                       <span className="text-xs text-slate-500 ml-1">%</span>
+                                   </div>
+                                   <span className="hidden print:inline font-normal text-slate-500">({vatPct}%)</span>
+                               </td>
+                               <td className="border border-slate-300 p-3 text-right text-slate-600">
+                                   {vatAmountCert.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                               </td>
+                           </tr>
+
+                           {/* Total Certified */}
+                           <tr className="bg-slate-50 font-bold">
+                               <td className="border border-slate-300 p-3">TOTAL CERTIFIED TO DATE</td>
+                               <td className="border border-slate-300 p-3 text-right text-slate-900">
+                                   {totalCertified.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                               </td>
+                           </tr>
+
+                           {/* Previous Payments */}
+                           <tr>
+                               <td className="border border-slate-300 p-3 flex items-center justify-between">
+                                   <span>Less: Previous Payments</span>
+                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
+                                       <span className="text-xs text-slate-500 mr-1">{projectCurrency}</span>
+                                       <input 
+                                           type="number" 
+                                           className="w-24 bg-transparent text-right font-mono text-xs outline-none font-bold"
+                                           value={previousPayments}
+                                           onChange={(e) => setPreviousPayments(parseFloat(e.target.value)||0)}
+                                       />
+                                   </div>
+                               </td>
+                               <td className="border border-slate-300 p-3 text-right text-red-600">
+                                   ({previousPayments.toLocaleString(undefined, {minimumFractionDigits: 2})})
+                               </td>
+                           </tr>
+
+                           {/* AMOUNT DUE */}
+                           <tr className="bg-slate-900 text-white">
+                               <td className="border border-slate-900 p-4 font-black uppercase text-lg">Net Amount Due</td>
+                               <td className="border border-slate-900 p-4 text-right font-black text-lg font-mono">
+                                   {projectCurrency} {amountDue.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                               </td>
+                           </tr>
+                       </tbody>
+                   </table>
+                   
+                   <div className="mt-8 p-4 bg-slate-50 border border-slate-200 rounded text-xs text-slate-600 italic leading-relaxed">
+                       <span className="font-bold not-italic text-slate-800 block mb-1">Certification Statement:</span>
+                       We hereby certify that the work described above has been executed in accordance with the contract terms and that the contractor is entitled to receive payment of 
+                       <span className="font-bold text-slate-900 mx-1">{amountDue.toLocaleString(undefined, {minimumFractionDigits: 2})} {projectCurrency}</span>
+                       (<span className="capitalize">{numberToWords(amountDue, projectCurrency)}</span>).
+                   </div>
+               </div>
+
+               <div className="p-8 border-t border-slate-200">
+                   {renderSignatures()}
+               </div>
+             </div>
+          )}
+
         </div>
         
         {/* SIDEBAR PREVIEW - HIDE IN PRINT */}
