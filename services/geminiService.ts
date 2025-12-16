@@ -38,60 +38,77 @@ const safeJsonParse = (input: string): any => {
     }
     clean = clean.substring(startIdx);
 
-    // 3. Try standard parse
+    // 3. Try standard parse first
     try {
         return JSON.parse(clean);
     } catch (e) {
-        console.warn("JSON Parse failed (likely truncated). Attempting advanced auto-repair...");
+        // console.warn("JSON Parse failed. Attempting repairs...");
+    }
+
+    // 4. PRE-REPAIR: Fix Common Syntax Errors before balancing
+    // Fix: "key": } -> "key": null } (Missing value)
+    clean = clean.replace(/":\s*([}\]])/g, '": null$1');
+    // Fix: "key": , -> "key": null, (Missing value before comma)
+    clean = clean.replace(/":\s*,/g, '": null,');
+    // Fix: trailing commas , } -> }
+    clean = clean.replace(/,\s*([}\]])/g, '$1');
+
+    // 5. ADVANCED REPAIR: Handle Truncation (Open Strings & Brackets)
+    let inString = false;
+    let isEscaped = false;
+    const stack: string[] = [];
+    let i = 0;
+
+    // We rebuild the string char by char to track state accurately
+    // Note: We are strictly analyzing structure to close it at the end
+    while (i < clean.length) {
+        const char = clean[i];
         
-        // 4. Advanced State Machine to track open strings and brackets
-        let inString = false;
-        let isEscaped = false;
-        const stack: string[] = [];
-        
-        for (const char of clean) {
-            if (inString) {
-                if (char === '\\' && !isEscaped) {
-                    isEscaped = true;
-                } else if (char === '"' && !isEscaped) {
-                    inString = false;
-                } else {
-                    isEscaped = false;
-                }
+        if (inString) {
+            if (char === '\\' && !isEscaped) {
+                isEscaped = true;
+            } else if (char === '"' && !isEscaped) {
+                inString = false;
             } else {
-                if (char === '"') {
-                    inString = true;
-                } else if (char === '{') {
-                    stack.push('}');
-                } else if (char === '[') {
-                    stack.push(']');
-                } else if (char === '}') {
-                    if (stack.length > 0 && stack[stack.length - 1] === '}') stack.pop();
-                } else if (char === ']') {
-                    if (stack.length > 0 && stack[stack.length - 1] === ']') stack.pop();
-                }
+                isEscaped = false;
+            }
+        } else {
+            if (char === '"') {
+                inString = true;
+            } else if (char === '{') {
+                stack.push('}');
+            } else if (char === '[') {
+                stack.push(']');
+            } else if (char === '}') {
+                if (stack.length > 0 && stack[stack.length - 1] === '}') stack.pop();
+            } else if (char === ']') {
+                if (stack.length > 0 && stack[stack.length - 1] === ']') stack.pop();
             }
         }
+        i++;
+    }
 
-        // 5. Close open string if truncation happened inside a value
-        if (inString) {
-            clean += '"';
-        }
+    // Close open string if truncation happened inside a value
+    if (inString) {
+        clean += '"';
+    }
 
-        // 6. Remove trailing comma (common if truncated after a field)
-        clean = clean.replace(/,\s*$/, '');
+    // Remove trailing comma if present at the very end of valid text
+    clean = clean.replace(/,\s*$/, '');
 
-        // 7. Close remaining open brackets in reverse order
-        while (stack.length > 0) {
-            clean += stack.pop();
-        }
+    // Close remaining open brackets in reverse order
+    while (stack.length > 0) {
+        clean += stack.pop();
+    }
 
-        try {
-            return JSON.parse(clean);
-        } catch (repairError) {
-            console.error("Auto-repair failed.", repairError);
-            throw new Error("The analysis was interrupted. Please try reducing the number of floors or file size.");
-        }
+    // 6. Final Attempt
+    try {
+        return JSON.parse(clean);
+    } catch (repairError) {
+        console.error("Auto-repair failed details:", clean.substring(Math.max(0, clean.length - 100)));
+        // If it looks like a valid partial object, we might return a partial result if logic allowed, 
+        // but for safety we throw the user-friendly error.
+        throw new Error("The analysis was interrupted or the file was too complex. Please try reducing the number of floors or file size.");
     }
 };
 
@@ -859,6 +876,7 @@ export const generateTakeoff = async (
     ${rebarInstruction}
     ${contractBase64Data ? "**MATCHING**: Map items to Contract BOQ." : ""}
     Output strictly valid JSON. Do not include markdown formatting. Keep descriptions concise.
+    Ensure all fields have proper values. Do not use incomplete JSON structure like "key": or "key": }. Use null if value is missing.
   `;
 
   // CALL AI WITH FALLBACK LOGIC
