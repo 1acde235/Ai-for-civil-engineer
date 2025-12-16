@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { TakeoffResult, UploadedFile, TakeoffItem, AppMode, CertificateMetadata } from '../types';
-import { Download, ChevronLeft, PlusCircle, Files, Coins, Lock, ZoomIn, ZoomOut, FileCode, AlertTriangle, Star, Grid, FileCheck, Building, BookOpen, Calendar, BadgeDollarSign, Eye, ChevronDown, ChevronRight, Sparkles, Loader2, ClipboardList, ArrowRight, PenTool, HelpCircle, AlertOctagon, Calculator, X, Save, Hammer, Truck, HardHat, Package, PieChart as PieChartIcon, Search, Filter, TrendingUp, AlertCircle, Settings, Printer, Share2, Unlock, Maximize2, RefreshCw, Trash2, Plus, FileImage, Lightbulb, TrendingDown, ShieldAlert, CheckCircle } from 'lucide-react';
+import { Download, ChevronLeft, PlusCircle, Files, Coins, Lock, ZoomIn, ZoomOut, FileCode, AlertTriangle, Star, Grid, FileCheck, Building, BookOpen, Calendar, BadgeDollarSign, Eye, ChevronDown, ChevronRight, Sparkles, Loader2, ClipboardList, ArrowRight, PenTool, HelpCircle, AlertOctagon, Calculator, X, Save, Hammer, Truck, HardHat, Package, PieChart as PieChartIcon, Search, Filter, TrendingUp, AlertCircle, Settings, Printer, Share2, Unlock, Maximize2, RefreshCw, Trash2, Plus, FileImage, Lightbulb, TrendingDown, ShieldAlert, CheckCircle, ExternalLink, Layers, Code, FileDigit } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getRateSuggestion, generateInsights, Insight } from '../services/geminiService';
 import { Logo } from './Logo';
@@ -49,6 +49,75 @@ interface BoqGroup {
   orderIndex: number; 
   rateBreakdown?: RateBreakdown; // New field
 }
+
+// --- DXF RENDERER COMPONENT ---
+const DxfPreview: React.FC<{ content: string }> = ({ content }) => {
+    const [paths, setPaths] = useState<string[]>([]);
+    const [viewBox, setViewBox] = useState("0 0 100 100");
+
+    useEffect(() => {
+        // Very basic DXF entity parser for preview
+        const lines: string[] = [];
+        const entities = content.split('ENTITIES')[1]?.split('ENDSEC')[0] || content;
+        
+        // Match LINE entities: 10, 20 (Start X,Y) -> 11, 21 (End X,Y)
+        // This is a heuristic regex for demo purposes
+        // Real DXF parsing requires a heavy library, here we just want a visual wireframe
+        
+        // Find rough coordinates
+        const coords: number[] = [];
+        const regex = /([0-9]+\.[0-9]+)/g;
+        let match;
+        // Limit to first 2000 matches for performance
+        let count = 0;
+        while ((match = regex.exec(entities)) !== null && count < 2000) {
+            coords.push(parseFloat(match[1]));
+            count++;
+        }
+
+        if (coords.length > 4) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            let pathData = "";
+            
+            for(let i=0; i<coords.length - 4; i+=4) {
+                const x1 = coords[i];
+                const y1 = coords[i+1];
+                const x2 = coords[i+2];
+                const y2 = coords[i+3];
+                
+                // Filter noise
+                if (x1 > 100000 || y1 > 100000) continue;
+
+                minX = Math.min(minX, x1, x2);
+                minY = Math.min(minY, y1, y2);
+                maxX = Math.max(maxX, x1, x2);
+                maxY = Math.max(maxY, y1, y2);
+
+                pathData += `M${x1},${y1} L${x2},${y2} `;
+            }
+            
+            // Add padding
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const pad = width * 0.1;
+            
+            setViewBox(`${minX - pad} ${minY - pad} ${width + pad*2} ${height + pad*2}`);
+            setPaths([pathData]);
+        } else {
+            // Fallback grid
+            setPaths(["M0,0 L100,100 M100,0 L0,100"]);
+        }
+
+    }, [content]);
+
+    return (
+        <svg viewBox={viewBox} className="w-full h-full bg-[#1e1e1e]">
+            {paths.map((d, i) => (
+                <path key={i} d={d} stroke="#38bdf8" strokeWidth="0.5%" fill="none" vectorEffect="non-scaling-stroke" />
+            ))}
+        </svg>
+    );
+};
 
 // Utility to convert number to words for Payment Certificate
 const numberToWords = (num: number, currency: string) => {
@@ -121,7 +190,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   onReset, 
   onAddDrawing, 
   credits, 
-  onUnlockProject,
+  onUnlockProject, 
   onBuyCredits, 
   appMode
 }) => {
@@ -134,7 +203,36 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   const [localFileUrls, setLocalFileUrls] = useState<Record<string, string>>({});
   
   const activeFile = files[activeFileIndex] || files[0];
-  const activeFileUrl = localFileUrls[activeFile?.name] || activeFile?.url;
+  
+  // Robust URL Getter
+  const getFilePreviewUrl = (file: UploadedFile | undefined) => {
+      if (!file) return null;
+      
+      // 1. Check if user manually re-uploaded a file for this session
+      if (localFileUrls[file.name]) return localFileUrls[file.name];
+      
+      // 2. Check if it's the SAMPLE PROJECT (Inject a nice dummy blueprint)
+      if (data.id === 'SAMPLE-VILLA-001') {
+          return "https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=2000&auto=format&fit=crop";
+      }
+
+      // 3. Check for Blob URL from current upload session
+      if (file.url && file.url.startsWith('blob:')) return file.url;
+      
+      // 4. Check for Base64 Data (Restored from backup/state)
+      if (file.data && file.data.length > 0) {
+          // Detect if it's already a data URI or raw base64
+          if (file.data.startsWith('data:')) return file.data;
+          // Construct Data URI (unless it's cad-text or csv which are raw strings)
+          if (file.type !== 'application/cad-text' && file.type !== 'text/csv' && file.type !== 'application/xml') {
+             return `data:${file.type};base64,${file.data}`;
+          }
+      }
+
+      return null;
+  };
+
+  const activeFileUrl = getFilePreviewUrl(activeFile);
   
   // Measurement Canvas State
   const [showMeasurementCanvas, setShowMeasurementCanvas] = useState(false);
@@ -165,6 +263,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   // INSIGHTS STATE
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loadingInsights, setLoadingInsights] = useState(false);
+
+  // CAD PREVIEW TABS
+  const [cadViewMode, setCadViewMode] = useState<'text' | 'viewer' | 'dxf'>('text');
 
   const isLocked = !data.isPaid;
 
@@ -211,9 +312,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   const [feedbackText, setFeedbackText] = useState('');
 
   // Identify file type
-  const isPdf = activeFile?.name.toLowerCase().endsWith('.pdf') || activeFile?.type.includes('pdf');
-  const isImage = activeFile?.type.includes('image') || activeFile?.name.toLowerCase().match(/\.(jpg|jpeg|png)$/);
-  const isDwg = activeFile?.name.toLowerCase().endsWith('.dwg') || activeFile?.name.toLowerCase().endsWith('.dxf');
+  // Treat sample project as Image for preview purposes
+  const isSample = data.id === 'SAMPLE-VILLA-001';
+  const fileName = activeFile?.name.toLowerCase() || "";
+  const fileType = activeFile?.type || "";
+
+  const isPdf = fileName.endsWith('.pdf') || fileType.includes('pdf');
+  const isImage = isSample || fileType.includes('image') || fileName.match(/\.(jpg|jpeg|png|webp)$/);
+  // Improved CAD Detection including raw text extraction types
+  const isDwg = fileName.endsWith('.dwg') || fileName.endsWith('.dxf') || fileType.includes('cad') || fileType === 'application/cad-text';
+  const isDxf = fileName.endsWith('.dxf') || (fileType === 'application/cad-text' && activeFile.data.startsWith('0\nSECTION'));
+  const isTextData = fileType === 'application/cad-text' || fileType === 'text/csv' || fileType === 'application/xml';
 
   // Handle local file re-upload for viewing
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -229,7 +338,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
      // Reset zoom/pan when file changes
      setCadZoom(1);
      setCadPan({ x: 0, y: 0 });
-  }, [activeFileIndex]);
+     // Default view mode for CAD
+     if (isDxf) setCadViewMode('dxf');
+     else if (isDwg) setCadViewMode('text');
+  }, [activeFileIndex, isDwg, isDxf]);
 
   useEffect(() => {
      setItems(data.items);
@@ -1196,7 +1308,267 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
           )}
 
-          {/* TAB: ANALYTICS (ADDED) */}
+          {/* TAB: GRAND SUMMARY (ESTIMATION MODE) */}
+          {activeTab === 'summary' && (
+              <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-4xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
+                  <div className="p-8 print:p-0">
+                      <div className="text-center mb-8 border-b-2 border-slate-800 pb-4">
+                          <h2 className="text-2xl font-black text-slate-900 uppercase tracking-widest">Grand Summary</h2>
+                          <p className="text-sm text-slate-500 font-mono mt-1">{takeoffMeta.projectName}</p>
+                      </div>
+
+                      <table className="w-full text-sm border-collapse border border-slate-300">
+                          <thead className="bg-slate-100">
+                              <tr>
+                                  <th className="p-3 border border-slate-300 text-left w-16">Ref</th>
+                                  <th className="p-3 border border-slate-300 text-left">Description</th>
+                                  <th className="p-3 border border-slate-300 text-right w-48">Amount ({projectCurrency})</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {boqCategories.map((cat, i) => (
+                                  <tr key={cat}>
+                                      <td className="p-3 border border-slate-300 text-center text-slate-500">{i + 1}</td>
+                                      <td className="p-3 border border-slate-300 font-bold text-slate-800 uppercase">{cat}</td>
+                                      <td className="p-3 border border-slate-300 text-right font-mono">
+                                          {categoryTotals[cat].contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                      </td>
+                                  </tr>
+                              ))}
+                              {/* Spacer */}
+                              <tr><td colSpan={3} className="h-4 bg-slate-50 border-x border-slate-300"></td></tr>
+                              
+                              {/* Totals */}
+                              <tr className="bg-slate-50 font-bold">
+                                  <td className="p-3 border border-slate-300 text-center">A</td>
+                                  <td className="p-3 border border-slate-300">SUB TOTAL (BUILDING WORKS)</td>
+                                  <td className="p-3 border border-slate-300 text-right">{totals.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border border-slate-300 text-center">B</td>
+                                  <td className="p-3 border border-slate-300 flex justify-between items-center">
+                                      <span>ADD CONTINGENCY</span>
+                                      <div className="flex items-center text-xs font-normal text-slate-500 print:hidden">
+                                          <input 
+                                              type="number" 
+                                              className="w-12 text-right border-b border-slate-300 outline-none mr-1 bg-transparent"
+                                              value={contingencyPct}
+                                              onChange={e => setContingencyPct(parseFloat(e.target.value))}
+                                          />
+                                          %
+                                      </div>
+                                      <span className="hidden print:inline text-xs font-normal ml-2">({contingencyPct}%)</span>
+                                  </td>
+                                  <td className="p-3 border border-slate-300 text-right text-slate-600">
+                                      {contingencyAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                  </td>
+                              </tr>
+                              <tr className="bg-slate-100 font-bold">
+                                  <td className="p-3 border border-slate-300 text-center">C</td>
+                                  <td className="p-3 border border-slate-300">TOTAL CARRIED TO FORM OF TENDER (A+B)</td>
+                                  <td className="p-3 border border-slate-300 text-right">{taxableAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border border-slate-300 text-center">D</td>
+                                  <td className="p-3 border border-slate-300 flex justify-between items-center">
+                                      <span>ADD VAT</span>
+                                      <div className="flex items-center text-xs font-normal text-slate-500 print:hidden">
+                                          <input 
+                                              type="number" 
+                                              className="w-12 text-right border-b border-slate-300 outline-none mr-1 bg-transparent"
+                                              value={vatPct}
+                                              onChange={e => setVatPct(parseFloat(e.target.value))}
+                                          />
+                                          %
+                                      </div>
+                                      <span className="hidden print:inline text-xs font-normal ml-2">({vatPct}%)</span>
+                                  </td>
+                                  <td className="p-3 border border-slate-300 text-right text-slate-600">
+                                      {vatAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                  </td>
+                              </tr>
+                              <tr className="bg-slate-900 text-white font-black text-lg print:bg-black print:text-white">
+                                  <td className="p-4 border border-slate-900 text-center">E</td>
+                                  <td className="p-4 border border-slate-900">GRAND TOTAL PROJECT COST</td>
+                                  <td className="p-4 border border-slate-900 text-right">
+                                      {projectCurrency} {grandTotals.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                  </td>
+                              </tr>
+                          </tbody>
+                      </table>
+
+                      <div className="mt-12">
+                          {renderSignatures()}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* TAB: PAYMENT CERTIFICATE (PAYMENT MODE) */}
+          {activeTab === 'payment' && (
+              <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-4xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
+                  <div className="p-8 print:p-0">
+                      {/* Header */}
+                      <div className="flex justify-between items-start border-b-4 border-slate-900 pb-6 mb-8">
+                          <div>
+                              <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter">Payment Certificate</h1>
+                              <div className="flex items-center space-x-2 mt-2">
+                                  <span className="text-sm font-bold bg-slate-900 text-white px-2 py-1 rounded">
+                                      {isFinalAccount ? "FINAL ACCOUNT" : "INTERIM CERTIFICATE"}
+                                  </span>
+                                  <span className="text-sm font-mono text-slate-500 flex items-center">
+                                      No. 
+                                      <input 
+                                          type="text" 
+                                          className="w-12 border-b border-slate-300 ml-1 outline-none text-center font-bold print:border-none print:bg-transparent"
+                                          value={certMeta.certNo}
+                                          onChange={e => setCertMeta({...certMeta, certNo: e.target.value})}
+                                      />
+                                  </span>
+                              </div>
+                          </div>
+                          <div className="text-right">
+                              <div className="text-xs text-slate-500 uppercase font-bold">Valuation Date</div>
+                              <input 
+                                  type="date" 
+                                  className="text-lg font-bold text-slate-900 text-right border-none outline-none bg-transparent"
+                                  value={certMeta.valuationDate}
+                                  onChange={e => setCertMeta({...certMeta, valuationDate: e.target.value})}
+                              />
+                          </div>
+                      </div>
+
+                      {/* Meta Data Grid */}
+                      <div className="grid grid-cols-2 gap-8 mb-8 text-sm">
+                          <div>
+                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Project</label>
+                              <div className="font-bold text-slate-900 text-lg border-b border-slate-200 pb-1">{takeoffMeta.projectName}</div>
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Contract Ref</label>
+                              <input 
+                                  type="text" 
+                                  className="w-full font-mono text-slate-700 border-b border-slate-200 pb-1 outline-none bg-transparent print:border-none"
+                                  value={certMeta.contractRef}
+                                  onChange={e => setCertMeta({...certMeta, contractRef: e.target.value})}
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Employer (Client)</label>
+                              <input 
+                                  type="text" 
+                                  className="w-full font-bold text-slate-800 border-b border-slate-200 pb-1 outline-none bg-transparent print:border-none"
+                                  value={takeoffMeta.client}
+                                  onChange={e => setTakeoffMeta({...takeoffMeta, client: e.target.value})}
+                                  placeholder="Enter Client Name"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Contractor</label>
+                              <input 
+                                  type="text" 
+                                  className="w-full font-bold text-slate-800 border-b border-slate-200 pb-1 outline-none bg-transparent print:border-none"
+                                  value={takeoffMeta.contractor}
+                                  onChange={e => setTakeoffMeta({...takeoffMeta, contractor: e.target.value})}
+                                  placeholder="Enter Contractor Name"
+                              />
+                          </div>
+                      </div>
+
+                      {/* Valuation Table */}
+                      <table className="w-full text-sm border border-slate-900 mb-8">
+                          <thead className="bg-slate-900 text-white print:bg-black print:text-white">
+                              <tr>
+                                  <th className="p-3 text-left w-12">Item</th>
+                                  <th className="p-3 text-left">Description</th>
+                                  <th className="p-3 text-right w-40">Amount ({projectCurrency})</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-300">
+                              <tr className="bg-slate-50 font-bold">
+                                  <td className="p-3 border-r border-slate-300 text-center">1</td>
+                                  <td className="p-3 border-r border-slate-300">Gross Value of Work Executed (Cumulative)</td>
+                                  <td className="p-3 text-right font-mono text-slate-900">{workExecutedCumulative.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border-r border-slate-300 text-center">2</td>
+                                  <td className="p-3 border-r border-slate-300 flex justify-between">
+                                      <span>Less: Retention</span>
+                                      <span className="text-xs text-slate-500 bg-slate-100 px-2 rounded">
+                                          {retentionPct}% Limit
+                                      </span>
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-red-600">({retentionAmount.toLocaleString(undefined, {minimumFractionDigits: 2})})</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border-r border-slate-300 text-center">3</td>
+                                  <td className="p-3 border-r border-slate-300 flex justify-between">
+                                      <span>Less: Advance Payment Recovery</span>
+                                      <input 
+                                          type="number" 
+                                          className="w-24 text-right border-b border-slate-300 outline-none text-xs print:border-none print:bg-transparent"
+                                          value={advanceRecovery}
+                                          onChange={e => setAdvanceRecovery(parseFloat(e.target.value) || 0)}
+                                          placeholder="0.00"
+                                      />
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-red-600">({advanceRecovery.toLocaleString(undefined, {minimumFractionDigits: 2})})</td>
+                              </tr>
+                              <tr className="bg-slate-100 font-bold">
+                                  <td className="p-3 border-r border-slate-300 text-center">4</td>
+                                  <td className="p-3 border-r border-slate-300">NET VALUATION (1 - 2 - 3)</td>
+                                  <td className="p-3 text-right font-mono text-slate-900">{netValuation.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border-r border-slate-300 text-center">5</td>
+                                  <td className="p-3 border-r border-slate-300 flex justify-between">
+                                      <span>Add: VAT ({vatPct}%)</span>
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-slate-600">{vatAmountCert.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr className="bg-slate-200 font-bold border-t-2 border-slate-900">
+                                  <td className="p-3 border-r border-slate-300 text-center">6</td>
+                                  <td className="p-3 border-r border-slate-300">TOTAL CERTIFIED TO DATE</td>
+                                  <td className="p-3 text-right font-mono text-slate-900">{totalCertified.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                              </tr>
+                              <tr>
+                                  <td className="p-3 border-r border-slate-300 text-center">7</td>
+                                  <td className="p-3 border-r border-slate-300 flex justify-between">
+                                      <span>Less: Previous Payments</span>
+                                      <input 
+                                          type="number" 
+                                          className="w-32 text-right border-b border-slate-300 outline-none text-xs font-normal print:border-none print:bg-transparent"
+                                          value={previousPayments}
+                                          onChange={e => setPreviousPayments(parseFloat(e.target.value) || 0)}
+                                          placeholder="Enter Amount"
+                                      />
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-red-600">({previousPayments.toLocaleString(undefined, {minimumFractionDigits: 2})})</td>
+                              </tr>
+                              <tr className="bg-slate-900 text-white font-black text-lg print:bg-black print:text-white">
+                                  <td className="p-4 border-r border-slate-700 text-center">8</td>
+                                  <td className="p-4 border-r border-slate-700">NET AMOUNT DUE THIS CERTIFICATE</td>
+                                  <td className="p-4 text-right">
+                                      {projectCurrency} {amountDue.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                  </td>
+                              </tr>
+                          </tbody>
+                      </table>
+
+                      {/* Certification Statement */}
+                      <div className="bg-slate-50 p-6 rounded-lg border border-slate-200 mb-8">
+                          <p className="text-sm font-serif text-slate-700 leading-relaxed italic">
+                              "We certify that the work detailed above has been satisfactorily carried out and the Contractor is entitled to the Net Amount of <span className="font-bold not-italic underline">{numberToWords(amountDue, projectCurrency)}</span>."
+                          </p>
+                      </div>
+
+                      {/* Signatures */}
+                      {renderSignatures()}
+                  </div>
+              </div>
+          )}
+
+          {/* TAB: ANALYTICS */}
           {activeTab === 'analytics' && (
               <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-6xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2 p-6">
                   <h2 className="text-xl font-bold text-slate-900 mb-6">Cost Analytics & Distribution</h2>
@@ -1266,7 +1638,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
           )}
 
-          {/* TAB: REBAR SCHEDULE (ADDED) */}
+          {/* TAB: REBAR SCHEDULE */}
           {activeTab === 'rebar' && (
               <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-6xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
                   <div className="p-6 bg-slate-50 border-b border-slate-300">
@@ -1326,7 +1698,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
               </div>
           )}
 
-          {/* TAB: TECHNICAL QUERIES (ADDED) */}
+          {/* TAB: TECHNICAL QUERIES */}
           {activeTab === 'technical' && (
               <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-6xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
                   <div className="p-6 bg-slate-50 border-b border-slate-300">
@@ -1669,265 +2041,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
              </div>
           )}
 
-          {/* TAB 3: GRAND SUMMARY (NEW) */}
-          {activeTab === 'summary' && appMode === AppMode.ESTIMATION && (
-             <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-4xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
-               <div className="p-8 bg-white border-b border-slate-200">
-                 <div className="text-center mb-8">
-                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-widest border-b-4 border-slate-900 inline-block pb-2">
-                        Grand Summary
-                    </h2>
-                 </div>
-                 {renderMetaInputs('light')}
-               </div>
-               
-               <div className="p-8">
-                   <table className="w-full text-sm border-collapse border border-slate-300">
-                       <thead className="bg-slate-100 text-slate-900 uppercase tracking-wider text-xs">
-                           <tr>
-                               <th className="border border-slate-300 p-3 text-left">Description</th>
-                               <th className="border border-slate-300 p-3 text-right w-48">Amount ({projectCurrency})</th>
-                           </tr>
-                       </thead>
-                       <tbody className="font-mono text-slate-700">
-                           {boqCategories.map(cat => (
-                               <tr key={cat}>
-                                   <td className="border border-slate-300 p-3">{cat}</td>
-                                   <td className="border border-slate-300 p-3 text-right font-bold">
-                                       {categoryTotals[cat].contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                                   </td>
-                               </tr>
-                           ))}
-                           {/* Empty Spacer */}
-                           <tr><td className="border border-slate-300 p-4 bg-slate-50" colSpan={2}></td></tr>
-                           
-                           {/* Totals */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 font-bold text-slate-800">SUB TOTAL (A)</td>
-                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-900">
-                                   {totals.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span className="font-bold text-slate-800">ADD: CONTINGENCY</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <input 
-                                           type="number" 
-                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
-                                           value={contingencyPct}
-                                           onChange={(e) => setContingencyPct(parseFloat(e.target.value)||0)}
-                                       />
-                                       <span className="text-xs text-slate-500 ml-1">%</span>
-                                   </div>
-                                   <span className="hidden print:inline font-normal text-slate-500">({contingencyPct}%)</span>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-600">
-                                   {contingencyAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                           <tr>
-                               <td className="border border-slate-300 p-3 font-bold text-slate-800">TOTAL AMOUNT (A+B)</td>
-                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-900">
-                                   {taxableAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span className="font-bold text-slate-800">ADD: VAT</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <input 
-                                           type="number" 
-                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
-                                           value={vatPct}
-                                           onChange={(e) => setVatPct(parseFloat(e.target.value)||0)}
-                                       />
-                                       <span className="text-xs text-slate-500 ml-1">%</span>
-                                   </div>
-                                   <span className="hidden print:inline font-normal text-slate-500">({vatPct}%)</span>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-600">
-                                   {vatAmounts.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                           <tr className="bg-slate-900 text-white">
-                               <td className="border border-slate-900 p-4 font-black uppercase text-lg">Grand Total</td>
-                               <td className="border border-slate-900 p-4 text-right font-black text-lg font-mono">
-                                   {projectCurrency} {grandTotals.contract.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                       </tbody>
-                   </table>
-                   
-                   <div className="mt-8 text-xs text-slate-500 italic">
-                       Amount in Words: {numberToWords(grandTotals.contract, projectCurrency)}
-                   </div>
-               </div>
-
-               <div className="p-8 border-t border-slate-200">
-                   {renderSignatures()}
-               </div>
-             </div>
-          )}
-
-          {/* TAB 4: PAYMENT CERTIFICATE (ADDED) */}
-          {activeTab === 'payment' && appMode === AppMode.PAYMENT && (
-             <div className="bg-white border border-slate-300 shadow-sm mb-24 max-w-4xl mx-auto print:shadow-none print:border-none print:mb-0 print:max-w-none animate-in fade-in slide-in-from-bottom-2">
-               <div className="p-8 bg-white border-b border-slate-200">
-                 <div className="text-center mb-8">
-                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-widest border-b-4 border-slate-900 inline-block pb-2">
-                        {isFinalAccount ? "Final Payment Certificate" : "Interim Payment Certificate"}
-                    </h2>
-                    <p className="text-sm font-mono mt-2 text-slate-500">Certificate No: {certMeta.certNo}</p>
-                 </div>
-                 {renderMetaInputs('light')}
-                 <div className="flex justify-between items-center text-xs text-slate-500 mt-4 border-t border-dashed border-slate-200 pt-4">
-                     <div>
-                         <label className="font-bold uppercase mr-2">Valuation Date:</label>
-                         <input type="date" value={certMeta.valuationDate} onChange={(e) => setCertMeta({...certMeta, valuationDate: e.target.value})} className="bg-transparent border-b border-slate-300 font-mono" />
-                     </div>
-                     <div>
-                         <label className="font-bold uppercase mr-2">Cert No:</label>
-                         <input type="text" value={certMeta.certNo} onChange={(e) => setCertMeta({...certMeta, certNo: e.target.value})} className="bg-transparent border-b border-slate-300 font-mono w-12 text-center" />
-                     </div>
-                 </div>
-               </div>
-               
-               <div className="p-8">
-                   <table className="w-full text-sm border-collapse border border-slate-300">
-                       <thead className="bg-slate-100 text-slate-900 uppercase tracking-wider text-xs">
-                           <tr>
-                               <th className="border border-slate-300 p-3 text-left">Description</th>
-                               <th className="border border-slate-300 p-3 text-right w-48">Amount ({projectCurrency})</th>
-                           </tr>
-                       </thead>
-                       <tbody className="font-mono text-slate-700">
-                           {/* Gross Value */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 font-bold text-slate-800">Gross Value of Work Executed</td>
-                               <td className="border border-slate-300 p-3 text-right font-bold text-slate-900">
-                                   {workExecutedCumulative.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                           
-                           {/* Retention */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span>Less: Retention</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <input 
-                                           type="number" 
-                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
-                                           value={retentionPct}
-                                           onChange={(e) => setRetentionPct(parseFloat(e.target.value)||0)}
-                                       />
-                                       <span className="text-xs text-slate-500 ml-1">%</span>
-                                   </div>
-                                   <span className="hidden print:inline font-normal text-slate-500">({retentionPct}%)</span>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right text-red-600">
-                                   ({retentionAmount.toLocaleString(undefined, {minimumFractionDigits: 2})})
-                               </td>
-                           </tr>
-
-                           {/* Advance Recovery */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span>Less: Advance Recovery</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <span className="text-xs text-slate-500 mr-1">{projectCurrency}</span>
-                                       <input 
-                                           type="number" 
-                                           className="w-24 bg-transparent text-right font-mono text-xs outline-none font-bold"
-                                           value={advanceRecovery}
-                                           onChange={(e) => setAdvanceRecovery(parseFloat(e.target.value)||0)}
-                                       />
-                                   </div>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right text-red-600">
-                                   ({advanceRecovery.toLocaleString(undefined, {minimumFractionDigits: 2})})
-                               </td>
-                           </tr>
-
-                           {/* Net Value */}
-                           <tr className="bg-slate-50 font-bold">
-                               <td className="border border-slate-300 p-3">Net Valuation</td>
-                               <td className="border border-slate-300 p-3 text-right">
-                                   {netValuation.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-
-                           {/* VAT */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span>Add: VAT</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <input 
-                                           type="number" 
-                                           className="w-12 bg-transparent text-right font-mono text-xs outline-none"
-                                           value={vatPct}
-                                           onChange={(e) => setVatPct(parseFloat(e.target.value)||0)}
-                                       />
-                                       <span className="text-xs text-slate-500 ml-1">%</span>
-                                   </div>
-                                   <span className="hidden print:inline font-normal text-slate-500">({vatPct}%)</span>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right text-slate-600">
-                                   {vatAmountCert.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-
-                           {/* Total Certified */}
-                           <tr className="bg-slate-50 font-bold">
-                               <td className="border border-slate-300 p-3">TOTAL CERTIFIED TO DATE</td>
-                               <td className="border border-slate-300 p-3 text-right text-slate-900">
-                                   {totalCertified.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-
-                           {/* Previous Payments */}
-                           <tr>
-                               <td className="border border-slate-300 p-3 flex items-center justify-between">
-                                   <span>Less: Previous Payments</span>
-                                   <div className="flex items-center bg-slate-100 rounded px-2 py-1 print:hidden">
-                                       <span className="text-xs text-slate-500 mr-1">{projectCurrency}</span>
-                                       <input 
-                                           type="number" 
-                                           className="w-24 bg-transparent text-right font-mono text-xs outline-none font-bold"
-                                           value={previousPayments}
-                                           onChange={(e) => setPreviousPayments(parseFloat(e.target.value)||0)}
-                                       />
-                                   </div>
-                               </td>
-                               <td className="border border-slate-300 p-3 text-right text-red-600">
-                                   ({previousPayments.toLocaleString(undefined, {minimumFractionDigits: 2})})
-                               </td>
-                           </tr>
-
-                           {/* AMOUNT DUE */}
-                           <tr className="bg-slate-900 text-white">
-                               <td className="border border-slate-900 p-4 font-black uppercase text-lg">Net Amount Due</td>
-                               <td className="border border-slate-900 p-4 text-right font-black text-lg font-mono">
-                                   {projectCurrency} {amountDue.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                               </td>
-                           </tr>
-                       </tbody>
-                   </table>
-                   
-                   <div className="mt-8 p-4 bg-slate-50 border border-slate-200 rounded text-xs text-slate-600 italic leading-relaxed">
-                       <span className="font-bold not-italic text-slate-800 block mb-1">Certification Statement:</span>
-                       We hereby certify that the work described above has been executed in accordance with the contract terms and that the contractor is entitled to receive payment of 
-                       <span className="font-bold text-slate-900 mx-1">{amountDue.toLocaleString(undefined, {minimumFractionDigits: 2})} {projectCurrency}</span>
-                       (<span className="capitalize">{numberToWords(amountDue, projectCurrency)}</span>).
-                   </div>
-               </div>
-
-               <div className="p-8 border-t border-slate-200">
-                   {renderSignatures()}
-               </div>
-             </div>
-          )}
-
         </div>
         
         {/* SIDEBAR PREVIEW - HIDE IN PRINT */}
@@ -1952,7 +2065,39 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                        </div>
                    </div>
                    <div className="flex items-center space-x-2">
-                       <span className="text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{isPdf ? 'PDF' : (isDwg ? 'CAD' : 'IMG')}</span>
+                       {/* MODE TOGGLES FOR CAD */}
+                       {(isDwg || isDxf) && (
+                           <div className="flex bg-slate-100 rounded border border-slate-200 p-0.5 mr-2">
+                               <button 
+                                   onClick={() => setCadViewMode('text')} 
+                                   className={`p-1 rounded ${cadViewMode === 'text' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400'}`}
+                                   title="Data Layers"
+                               >
+                                   <Code className="w-3 h-3" />
+                               </button>
+                               {isDxf && (
+                                   <button 
+                                       onClick={() => setCadViewMode('dxf')} 
+                                       className={`p-1 rounded ${cadViewMode === 'dxf' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400'}`}
+                                       title="Visual Preview"
+                                   >
+                                       <Layers className="w-3 h-3" />
+                                   </button>
+                               )}
+                               <button 
+                                   onClick={() => setCadViewMode('viewer')} 
+                                   className={`p-1 rounded ${cadViewMode === 'viewer' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400'}`}
+                                   title="External 3D Viewer"
+                               >
+                                   <ExternalLink className="w-3 h-3" />
+                               </button>
+                           </div>
+                       )}
+
+                       <span className="text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                           {isPdf ? 'PDF' : (isDwg ? (isDxf ? 'DXF' : 'DWG') : (isTextData ? 'DATA' : 'IMG'))}
+                       </span>
+                       
                        {isImage && activeFileUrl && (
                            <button onClick={() => setShowMeasurementCanvas(true)} className="flex items-center bg-slate-900 text-white px-2 py-0.5 rounded hover:bg-slate-700 transition-colors" title="Launch Interactive Overlay">
                                <Maximize2 className="w-3 h-3 mr-1" /> Measure
@@ -1961,23 +2106,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                    </div>
                 </div>
 
+                {/* PDF VIEWER */}
                 {isPdf && activeFileUrl ? (
                     <iframe src={activeFileUrl} className="w-full h-full border-none" title="PDF Viewer" />
-                ) : (isPdf && !activeFileUrl ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-slate-50 space-y-4">
-                        <FileCode className="w-12 h-12 text-slate-300" />
-                        <div>
-                            <h3 className="text-sm font-bold text-slate-800">Preview Not Available</h3>
-                            <p className="text-xs mt-1 text-slate-400 max-w-[200px] mx-auto">This project was restored from backup. Please re-upload the drawing to view it.</p>
-                        </div>
-                        <label className="cursor-pointer bg-white border border-slate-300 hover:border-brand-500 text-brand-600 px-4 py-2 rounded shadow-sm text-xs font-bold flex items-center transition-all">
-                            <RefreshCw className="w-3 h-3 mr-2" />
-                            Reload {activeFile.name.substring(0,10)}...
-                            <input type="file" className="hidden" accept=".pdf" onChange={handleReloadDrawing} />
-                        </label>
-                    </div>
-                ) : null)}
+                ) : null}
 
+                {/* IMAGE VIEWER */}
                 {isImage && activeFileUrl ? (
                     <div className="flex-1 relative overflow-hidden bg-slate-900 grid-pattern">
                         <div className="absolute top-4 left-4 z-20 bg-slate-800/80 backdrop-blur rounded shadow-sm border border-slate-600 p-1 space-y-1">
@@ -2001,30 +2135,95 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
                             </div>
                         </div>
                     </div>
-                ) : (isImage && !activeFileUrl ? (
+                ) : null}
+
+                {/* --- CAD (DWG/DXF) & DATA VIEWERS --- */}
+                {((isDwg || isDxf || isTextData) && !isPdf && !isImage) && (
+                    <div className="w-full h-full bg-[#1e1e1e] flex flex-col relative overflow-hidden">
+                        
+                        {/* 1. DXF VISUAL PREVIEW */}
+                        {cadViewMode === 'dxf' && isDxf && activeFile.data && (
+                            <div className="flex-1 overflow-hidden relative">
+                                <div className="absolute top-4 left-4 z-20 pointer-events-none">
+                                    <div className="text-xs text-slate-500 font-mono bg-black/50 px-2 py-1 rounded backdrop-blur">DXF Wireframe Preview</div>
+                                </div>
+                                <div className="w-full h-full p-4">
+                                    <DxfPreview content={activeFile.data} />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 2. TEXT/DATA LAYER VIEW (For DWG/CSV) */}
+                        {(cadViewMode === 'text' || isTextData) && (
+                            <div className="flex-1 flex flex-col">
+                                <div className="bg-black px-4 py-2 border-b border-slate-800 flex justify-between items-center">
+                                    <span className="text-xs text-green-500 font-mono flex items-center"><FileDigit className="w-3.5 h-3.5 mr-2" /> Extracted Metadata</span>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                    <pre className="text-[10px] font-mono text-slate-400 whitespace-pre-wrap leading-relaxed">
+                                        {activeFile.data ? (
+                                            activeFile.data.length > 50000 
+                                            ? activeFile.data.substring(0, 50000) + "\n... [Preview Truncated]" 
+                                            : activeFile.data
+                                        ) : "No text data extracted."}
+                                    </pre>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 3. EXTERNAL VIEWER LINK */}
+                        {cadViewMode === 'viewer' && (
+                            <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center">
+                                <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center mb-6 shadow-xl border border-slate-700">
+                                    <Layers className="w-8 h-8 text-brand-500" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white mb-2">High-Fidelity Viewer</h3>
+                                <p className="text-xs text-slate-400 max-w-xs mb-8 leading-relaxed">
+                                    To view complex layers, 3D models, and XREFs with full fidelity, please use the secure Autodesk Online Viewer.
+                                </p>
+                                
+                                <div className="flex flex-col gap-3 w-full max-w-[240px]">
+                                    <a 
+                                        href="https://viewer.autodesk.com/" 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="flex items-center justify-center w-full px-4 py-3 bg-brand-600 text-white rounded-lg text-xs font-bold hover:bg-brand-500 transition-colors shadow-lg shadow-brand-500/20"
+                                    >
+                                        <ExternalLink className="w-3.5 h-3.5 mr-2" /> Launch Autodesk Viewer
+                                    </a>
+                                    
+                                    {activeFileUrl && (
+                                        <a 
+                                            href={activeFileUrl} 
+                                            download={activeFile.name}
+                                            className="flex items-center justify-center w-full px-4 py-3 bg-slate-800 border border-slate-700 text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors"
+                                        >
+                                            <Download className="w-3.5 h-3.5 mr-2" /> Download Source File
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* FALLBACK FOR MISSING PREVIEWS */}
+                {(!isPdf && !isImage && !isDwg && !isDxf && !isTextData) || (isImage && !activeFileUrl) ? (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-slate-50 space-y-4">
-                        <FileImage className="w-12 h-12 text-slate-300" />
+                        <AlertTriangle className="w-12 h-12 text-slate-300" />
                         <div>
-                            <h3 className="text-sm font-bold text-slate-800">Image Not Loaded</h3>
-                            <p className="text-xs mt-1 text-slate-400 max-w-[200px] mx-auto">Re-upload to enable measurement tools.</p>
+                            <h3 className="text-sm font-bold text-slate-800">Preview Not Available</h3>
+                            <p className="text-xs mt-1 text-slate-400 max-w-[200px] mx-auto">
+                                The file source is missing or the format is not supported for preview.
+                            </p>
                         </div>
                         <label className="cursor-pointer bg-white border border-slate-300 hover:border-brand-500 text-brand-600 px-4 py-2 rounded shadow-sm text-xs font-bold flex items-center transition-all">
                             <RefreshCw className="w-3 h-3 mr-2" />
-                            Reload Image
-                            <input type="file" className="hidden" accept="image/*" onChange={handleReloadDrawing} />
+                            Reload File...
+                            <input type="file" className="hidden" onChange={handleReloadDrawing} />
                         </label>
                     </div>
-                ) : null)}
-
-                {!isPdf && !isImage && (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-slate-50">
-                        <div className="w-16 h-16 bg-slate-200 rounded flex items-center justify-center mb-4">
-                            <AlertTriangle className="w-8 h-8 text-amber-500" />
-                        </div>
-                        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Preview Unavailable</h3>
-                        <p className="text-xs mt-2 text-slate-400">Binary file format (DWG/DXF)</p>
-                    </div>
-                )}
+                ) : null}
             </div>
         )}
       </div>
