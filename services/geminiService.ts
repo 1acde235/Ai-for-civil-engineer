@@ -60,7 +60,6 @@ const safeJsonParse = (input: string): any => {
     let i = 0;
 
     // We rebuild the string char by char to track state accurately
-    // Note: We are strictly analyzing structure to close it at the end
     while (i < clean.length) {
         const char = clean[i];
         
@@ -95,6 +94,31 @@ const safeJsonParse = (input: string): any => {
 
     // Remove trailing comma if present at the very end of valid text
     clean = clean.replace(/,\s*$/, '');
+
+    // CHECK FOR DANGLING KEYS / TRUNCATED VALUES
+    if (stack.length > 0 && stack[stack.length - 1] === '}') {
+        // Case 1: Ends with colon (e.g. "key":) -> Add null
+        if (clean.trim().endsWith(':')) {
+            clean += ' null';
+        } 
+        // Case 2: Ends with a string that is likely a key (e.g. { "key") -> Add : null
+        else {
+             const match = clean.match(/"([^"\\]*(\\.[^"\\]*)*)"\s*$/);
+             if (match) {
+                 const strIndex = match.index!;
+                 let j = strIndex - 1;
+                 while (j >= 0 && /\s/.test(clean[j])) j--;
+                 
+                 if (j >= 0) {
+                     const charBefore = clean[j];
+                     // If preceded by comma or opening brace, it's a key
+                     if (charBefore === ',' || charBefore === '{') {
+                         clean += ': null';
+                     }
+                 }
+             }
+        }
+    }
 
     // Close remaining open brackets in reverse order
     while (stack.length > 0) {
