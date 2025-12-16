@@ -99,7 +99,8 @@ export enum AppState {
   INSTRUCTIONS = 'INSTRUCTIONS',
   ANALYZING = 'ANALYZING',
   RESULTS = 'RESULTS',
-  ERROR = 'ERROR'
+  ERROR = 'ERROR',
+  MARKETING = 'MARKETING' // NEW: Marketing Generator
 }
 
 export enum AppMode {

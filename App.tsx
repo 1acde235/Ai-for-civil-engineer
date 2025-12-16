@@ -11,6 +11,7 @@ import { DisclaimerModal } from './components/DisclaimerModal';
 import { DashboardView } from './components/DashboardView'; 
 import { TutorialModal } from './components/TutorialModal';
 import { ChatSupport } from './components/ChatSupport'; 
+import { MarketingGenerator } from './components/MarketingGenerator'; // Import
 import { generateTakeoff, generateSchedule, FileInput } from './services/geminiService';
 import { AppState, TakeoffResult, UploadedFile, AppMode } from './types';
 import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft, RotateCw, Settings, PlayCircle } from 'lucide-react';
@@ -142,7 +143,7 @@ const App: React.FC = () => {
       
       const hasKey = (localKey && localKey.startsWith('AIza')) || (envKey && envKey.length > 10 && !envKey.includes('undefined'));
       
-      if (!hasKey && appState !== AppState.LANDING) {
+      if (!hasKey && appState !== AppState.LANDING && appState !== AppState.MARKETING) {
           showToast("API Key Missing. Please configure in Settings.");
           setShowSettings(true);
       }
@@ -745,6 +746,11 @@ const App: React.FC = () => {
       setAppState(AppState.UPLOAD);
   };
 
+  // --- NEW MARKETING ROUTE HANDLER ---
+  const handleOpenMarketing = () => {
+      setAppState(AppState.MARKETING);
+  };
+
   return (
     <div className="min-h-screen flex flex-col relative font-sans text-slate-900 bg-slate-50 selection:bg-brand-500 selection:text-white">
       
@@ -757,7 +763,7 @@ const App: React.FC = () => {
       )}
 
       {/* NAVBAR */}
-      {appState !== AppState.LANDING && (
+      {appState !== AppState.LANDING && appState !== AppState.MARKETING && (
         <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 h-16 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 h-full flex justify-between items-center">
             <div 
@@ -807,6 +813,7 @@ const App: React.FC = () => {
              onLogin={() => setAppState(AppState.DASHBOARD)} 
              onTryDemo={handleTryDemo}
              onOpenGuide={() => setShowTutorial(true)}
+             onOpenMarketing={() => setAppState(AppState.MARKETING)} // Pass new handler
           />
         )}
 
@@ -822,6 +829,11 @@ const App: React.FC = () => {
                 onImportBackup={handleImportBackup}
                 onLoadSample={handleTryDemo} // Pass sample handler to dashboard
              />
+        )}
+
+        {/* --- MARKETING GENERATOR VIEW --- */}
+        {appState === AppState.MARKETING && (
+            <MarketingGenerator onBack={() => setAppState(AppState.LANDING)} />
         )}
 
         {appState === AppState.MODE_SELECT && (

@@ -9,6 +9,7 @@ interface LandingPageProps {
   onLogin: () => void; 
   onTryDemo: () => void; 
   onOpenGuide: () => void;
+  onOpenMarketing?: () => void; // New prop
 }
 
 const FAQS = [
@@ -89,7 +90,7 @@ const CountUp = ({ end, duration = 2000, suffix = "" }: { end: number, duration?
     return <span ref={ref}>{count}{suffix}</span>;
 };
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin, onTryDemo, onOpenGuide }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin, onTryDemo, onOpenGuide, onOpenMarketing }) => {
   const [showTerms, setShowTerms] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -624,6 +625,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin,
             <div className="flex flex-wrap justify-center gap-8">
                 <button onClick={() => setShowTerms(true)} className="text-xs text-slate-500 hover:text-brand-400 transition-colors">Terms</button>
                 <button onClick={() => setShowPrivacy(true)} className="text-xs text-slate-500 hover:text-brand-400 transition-colors">Privacy</button>
+                {onOpenMarketing && (
+                    <button onClick={onOpenMarketing} className="text-xs text-slate-500 hover:text-brand-400 transition-colors">Media Kit</button>
+                )}
                 <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-500 hover:text-[#25D366] transition-colors">Contact Support</a>
             </div>
         </div>
