@@ -17,6 +17,7 @@ const getApiKey = (): string => {
 
 // --- HELPER: ROBUST JSON PARSER ---
 const safeJsonParse = (input: string): any => {
+    if (!input) return {};
     let clean = input.replace(/```json/g, '').replace(/```/g, '').trim();
     const firstBrace = clean.indexOf('{');
     const firstBracket = clean.indexOf('[');
@@ -33,10 +34,10 @@ const safeJsonParse = (input: string): any => {
     try {
         return JSON.parse(clean);
     } catch (e) {
-        // Repair attempts
-        clean = clean.replace(/":\s*([}\]])/g, '": null$1');
+        // Repair attempts for common LLM JSON errors
+        clean = clean.replace(/":\s*([}\]])/g, '": null$1'); // Trailing comma or missing value
         clean = clean.replace(/":\s*,/g, '": null,');
-        clean = clean.replace(/,\s*([}\]])/g, '$1');
+        clean = clean.replace(/,\s*([}\]])/g, '$1'); // Trailing comma
         
         // Try closing truncated JSON
         let openBraces = (clean.match(/{/g) || []).length;
@@ -50,16 +51,28 @@ const safeJsonParse = (input: string): any => {
         try {
             return JSON.parse(clean);
         } catch (finalError) {
+            console.error("JSON Repair Failed. Raw Text:", input);
             throw new Error("The file analysis was interrupted. Please try again or reduce the number of files.");
         }
     }
 };
 
-// --- HELPER: CHECK IF ERROR IS QUOTA/RATE LIMIT ---
-const isQuotaError = (error: any): boolean => {
+// --- HELPER: CHECK IF ERROR IS RETRYABLE ---
+const isRetryableError = (error: any): boolean => {
     const msg = (error.message || "").toLowerCase();
     const status = error.status || error.code || (error.response ? error.response.status : 0);
-    return status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded") || msg.includes("busy") || msg.includes("too many requests");
+    
+    // Rate Limits / Quota
+    if (status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded") || msg.includes("busy") || msg.includes("too many requests")) {
+        return true;
+    }
+    
+    // Network Errors (Failed to fetch)
+    if (msg.includes("failed to fetch") || msg.includes("network") || msg.includes("connection")) {
+        return true;
+    }
+
+    return false;
 };
 
 // --- GENERIC GENERATION WITH EXPONENTIAL BACKOFF ---
@@ -91,8 +104,8 @@ const generateWithFallback = async (
             });
             return response;
         } catch (error: any) {
-            if (attemptsLeft > 0 && isQuotaError(error)) {
-                console.warn(`Rate Limit Hit (${model}). Waiting ${delayMs}ms...`);
+            if (attemptsLeft > 0 && isRetryableError(error)) {
+                console.warn(`Retryable Error (${model}): ${error.message}. Waiting ${delayMs}ms...`);
                 await new Promise(r => setTimeout(r, delayMs));
                 // Exponential Backoff: 2s -> 4s -> 8s -> 16s
                 return callModel(model, attemptsLeft - 1, delayMs * 2);
@@ -105,14 +118,14 @@ const generateWithFallback = async (
         // Try Primary Model (Flash) - 3 Retries (2s, 4s, 8s)
         return await callModel(primaryModel, 3, 2000);
     } catch (error: any) {
-        console.warn(`Primary model ${primaryModel} exhausted. Switching to ${fallbackModel}.`);
+        console.warn(`Primary model ${primaryModel} failed. Switching to ${fallbackModel}. Error: ${error.message}`);
         
         // Try Fallback Model (Pro) - 2 Retries (4s, 8s)
         try {
             return await callModel(fallbackModel, 2, 4000);
         } catch (fallbackError: any) {
-            if (isQuotaError(fallbackError)) {
-                throw new Error("429_BUSY"); // Specific code for App.tsx to handle
+            if (isRetryableError(fallbackError)) {
+                throw new Error("429_BUSY"); // Specific code for App.tsx to handle with UI countdown
             }
             throw fallbackError;
         }
@@ -341,38 +354,24 @@ const SUPPORTED_VISUAL_MIME_TYPES = [
 ];
 
 export const generateInsights = async (items: TakeoffItem[]): Promise<Insight[]> => {
-    // API KEY CHECK
     const apiKey = getApiKey();
     const ai = new GoogleGenAI({ apiKey });
     const model = "gemini-2.5-flash"; 
 
-    // Summarize items for token efficiency
     const summary = items.slice(0, 50).map(i => `- ${i.billItemDescription || i.description}: ${i.quantity} ${i.unit} (${i.category})`).join('\n');
 
     const prompt = `
-        Act as a **Senior Construction Commercial Manager** (Chartered Quantity Surveyor).
-        Review this partial Bill of Quantities (BOQ) and generated Takeoff data.
+        Act as a **Senior Construction Commercial Manager**.
+        Review this partial BOQ and generated Takeoff data.
         
-        **YOUR MISSION**:
-        Provide superior "Value Engineering" (Cost Saving) and "Risk Intelligence" insights.
-        Look for:
-        1. Over-specification (e.g., C35 concrete for simple partitions).
-        2. High-cost items that have cheaper alternatives (e.g., Marble vs. Porcelain).
-        3. Missing essential items (Scope Gaps).
-        4. Unusual quantity ratios (Risk of under-estimation).
-
+        **MISSION**:
+        Provide "Value Engineering" (Cost Saving) and "Risk Intelligence" insights.
+        
         **INPUT DATA**:
         ${summary}
 
         **OUTPUT**:
         Return a JSON object containing exactly 4 detailed insights (2 Savings, 2 Risks).
-        Structure:
-        {
-            "insights": [
-                { "type": "saving", "title": "Optimize Concrete Grade", "description": "Partitions specified as C35 could be C25...", "impact": "High Savings" },
-                { "type": "risk", "title": "Missing Waterproofing", "description": "Basement walls detected but no tanking...", "impact": "Critical Risk" }
-            ]
-        }
     `;
 
     try {
@@ -405,7 +404,6 @@ export const generateSchedule = async (
   startDate: string = new Date().toISOString().split('T')[0]
 ): Promise<TakeoffResult> => {
     
-    // API KEY CHECK
     const apiKey = getApiKey();
 
     const parts: any[] = [];
@@ -413,103 +411,58 @@ export const generateSchedule = async (
         parts.push({ text: `\n--- FILE ${index + 1}: ${file.fileName} ---\n` });
         
         if (file.mimeType === 'application/cad-text') {
-            // It's raw text extracted from CAD
-            parts.push({ text: `[RAW CAD DATA STREAM]\nThe following is TEXT extracted from the internal binary of the CAD file. \nLook for Layer Names (e.g., "A-WALL", "S-COL"), Text Notes, and Block Attributes to infer scope and materials:\n\n${file.data}` });
+            parts.push({ text: `[RAW CAD DATA STREAM]\n${file.data}` });
         } else if (file.mimeType === 'text/csv' || file.mimeType === 'application/xml') {
-            parts.push({ text: `[EXISTING SCHEDULE DATA]\nFormat: ${file.mimeType}\n\n${file.data.substring(0, 150000)}` }); // Limit large files
+            parts.push({ text: `[EXISTING SCHEDULE DATA]\nFormat: ${file.mimeType}\n\n${file.data.substring(0, 150000)}` });
         } else if (SUPPORTED_VISUAL_MIME_TYPES.includes(file.mimeType)) {
             parts.push({ inlineData: { mimeType: file.mimeType, data: file.data } });
         } else {
-            // Fallback for unknowns
             parts.push({ text: `[SYSTEM: Unknown Binary File '${file.fileName}']` });
         }
     });
 
-    // Select WBS based on project Type
     const selectedWBS = projectType === 'infrastructure' ? CIVIL_WBS : BUILDING_WBS;
 
-    // Build Calendar Context
     const calendarContext = `
     **CALENDAR CONSTRAINTS**:
     - Working Days: ${calendarSettings.workingDays.join(', ')}
     - Work Hours: ${calendarSettings.hoursPerDay} hours/day
     - Holidays: ${calendarSettings.holidays || "None"}
     - Start Date: ${startDate}
-    
-    *Instruction*: When calculating 'endDate', strictly account for non-working days. If a task is 10 days duration and work week is 5 days, it takes 2 calendar weeks.
     `;
 
-    // INTELLIGENT PROMPTING WITH WBS TRAINING
     let strategyBlock = "";
     if (detailLevel === 'reschedule') {
         strategyBlock = `
-        **MODE: RESCHEDULING / RECOVERY / OPTIMIZATION**
-        
-        **SCENARIO A: Input is an Existing Schedule (CSV/XML/Text)**
-        1. **PARSE**: Read the existing Tasks, Start Dates, and Durations.
-        2. **DIAGNOSE**: Identify logic gaps, negative float, or unrealistic durations.
-        3. **OPTIMIZE**: Re-calculate dates based on the NEW Start Date: ${startDate}. Compress critical path where possible.
-        
-        **SCENARIO B: Input is a Drawing/Plan (PDF/Image/CAD)**
-        1. **ASSUME DELAY**: The project is behind schedule or needs a "Crash Program" / "Recovery Schedule".
-        2. **GENERATE**: Create a fast-track schedule. 
-           - Use aggressive durations.
-           - Overlap phases (Start-to-Start logic with lag).
-           - Increase resources in the 'resources' field (e.g. "Double Shift").
-           - Target the shortest realistic duration.
-        
-        **OUTPUT**: Return the CLEANED, OPTIMIZED version using the Schedule Schema.
+        **MODE: RESCHEDULING / RECOVERY**
+        Re-calculate dates based on the NEW Start Date: ${startDate}. Compress critical path where possible.
         ${calendarContext}
         `;
     } else if (detailLevel === 'detail') {
         strategyBlock = `
         ${selectedWBS}
-        
         **CURRENT PROJECT CONTEXT**:
         - Type: ${projectType.toUpperCase()}
-        - Total Floors: ${floorCount} (Ignore if Infrastructure)
+        - Total Floors: ${floorCount}
         - Basements: ${basementCount}
         ${calendarContext}
-        
-        **SENIOR PLANNER RULES (40 YEARS EXPERIENCE)**:
-        1. **Deep Nesting for Floors**: 
-           For Building projects, you MUST generate the "Typical Floor" template (ID 3.X) EXACTLY as shown in the WBS above.
-           - Group activities by Trade (Concrete, Formwork, Masonry, Finishing, Electrical, Mechanical, Sanitary).
-           - Under MEP, explicitly list Electrical, Mechanical, and Sanitary as separate tasks.
-           - Under Structure, separate Columns, Beams, Slabs for both Concrete and Formwork.
-        
-        2. **Logic Linking**: 
-           - Formwork -> Rebar -> Concrete (FS).
-           - Masonry starts after Slab curing (SS + Lag).
-           - Electrical/Mechanical First Fix starts after Masonry (FS).
-           - Plastering starts after First Fix (FS).
-        3. **Resources**: "1 Carpenter, 2 Helpers", "1 Concrete Pump", "1 Electrician Gang".
+        **RULES**:
+        Generate the "Typical Floor" template (ID 3.X) EXACTLY as shown in the WBS above.
         `;
     } else {
         strategyBlock = `
         **MODE: MASTER SUMMARY**
-        - Group major phases only.
-        - Do not list individual tasks.
+        Group major phases only.
         ${calendarContext}
         `;
     }
 
     const systemInstruction = `
-        Act as a **Senior Construction Planner** (Primavera P6 / MS Project Expert).
-        
-        **OBJECTIVE**:
-        Create a **DYNAMIC, HIERARCHICAL** construction schedule based on the input files.
-        
-        **HANDLING CAD DATA**:
-        If you received [RAW CAD DATA STREAM], analyze the text for keywords like "Concrete", "Grade 25", "Room", "Office", "Bedroom", "Road", "River" etc. to determine the project scope and complexity. Use this real data to build the schedule.
-        
+        Act as a **Senior Construction Planner**.
+        Create a **DYNAMIC, HIERARCHICAL** construction schedule.
         ${strategyBlock}
         Notes from User: "${userInstructions}".
-        
-        **OUTPUT FORMAT**:
-        Return strictly valid JSON matching the schema. 
-        For Building projects with multiple floors, generate the 'Typical Floor' tasks using '3.X' in the taskId (e.g., 3.X.1, 3.X.1.1). The system will auto-replicate this for all ${floorCount} floors.
-        Do not output Markdown code blocks. Keep descriptions concise.
+        Return strictly valid JSON matching the schema.
     `;
 
     const response = await generateWithFallback(apiKey, {
@@ -524,23 +477,18 @@ export const generateSchedule = async (
     try {
         const res = safeJsonParse(text);
         
-        // --- POST-PROCESSING: EXPAND HIGH-RISE TEMPLATES & ENSURE WBS ---
         let finalScheduleItems: ScheduleTask[] = [];
         let items = res.scheduleItems || [];
 
         if (!Array.isArray(items)) items = [];
 
-        // ONLY RUN HIGH RISE LOGIC FOR BUILDINGS AND IF NOT RESCHEDULING EXISTING FILES
         if (detailLevel === 'detail' && projectType === 'building') {
-            // 1. Separate Templates from Standard Items
             const templateItems = items.filter((i: any) => i.taskId && (i.taskId.includes('3.X') || i.activity.includes('Typical')));
             let otherItems = items.filter((i: any) => !i.taskId?.includes('3.X') && !i.activity?.includes('Typical'));
             
-            // 2. Expand High Rise Logic (Floor 1 to N)
             const expandedFloors: ScheduleTask[] = [];
             let structureStartDate = new Date(startDate);
             
-            // Find start date based on Substructure (Task 2)
             const substructureTasks = otherItems.filter((i: any) => i.taskId.startsWith('2.'));
             if (substructureTasks.length > 0) {
                     const maxEnd = substructureTasks.reduce((max: Date, t: any) => {
@@ -551,24 +499,15 @@ export const generateSchedule = async (
             }
 
             if (templateItems.length > 0 && floorCount > 0) {
-                const sortedTemplate = [...templateItems].sort((a: any, b: any) => {
-                    // Sort by ID depth so parents come before children
-                    return a.taskId.localeCompare(b.taskId); 
-                });
-                
+                const sortedTemplate = [...templateItems].sort((a: any, b: any) => a.taskId.localeCompare(b.taskId));
                 const firstTemplateItem = sortedTemplate[0];
                 const baseTemplateDate = new Date(firstTemplateItem.startDate).getTime();
-                // Estimated cycle per floor (Structure + Finishes lag)
-                const cycleDays = 14; 
 
                 for (let f = 1; f <= floorCount; f++) {
-                    const floorStartOffsetMs = (f - 1) * 7 * 24 * 60 * 60 * 1000; // 7 Day structure cycle offset
+                    const floorStartOffsetMs = (f - 1) * 7 * 24 * 60 * 60 * 1000;
                     const floorBaseDateMs = structureStartDate.getTime() + floorStartOffsetMs;
-
-                    // Create Summary Task for Floor
                     const floorSummaryId = `3.${f}`;
                     const floorStart = new Date(floorBaseDateMs).toISOString().split('T')[0];
-                    // Approx end date buffer
                     const floorEnd = new Date(floorBaseDateMs + (30 * 86400000)).toISOString().split('T')[0]; 
 
                     expandedFloors.push({
@@ -576,7 +515,7 @@ export const generateSchedule = async (
                         taskId: floorSummaryId,
                         activity: `Floor ${f} (Level ${f})`,
                         category: "Superstructure",
-                        duration: 30, // Summary duration placeholder
+                        duration: 30,
                         startDate: floorStart,
                         endDate: floorEnd,
                         dependencies: f > 1 ? [`3.${f-1}`] : [],
@@ -586,58 +525,39 @@ export const generateSchedule = async (
                         notes: "Generated by High-Rise Cycle Algorithm"
                     });
 
-                    // Expand Sub-tasks
                     sortedTemplate.forEach((tpl: ScheduleTask) => {
                         const newTask = { ...tpl };
                         newTask.id = crypto.randomUUID();
-                        
-                        // Replace 3.X with 3.f
-                        // Handle nested IDs like 3.X.1.1 -> 3.1.1.1
                         const suffix = tpl.taskId.replace('3.X', ''); 
                         newTask.taskId = `3.${f}${suffix}`; 
-                        
                         newTask.activity = tpl.activity.replace(/Typical Floor/g, `Floor ${f}`).replace(/Level X/g, `Level ${f}`);
-
                         const taskOffsetMs = new Date(tpl.startDate).getTime() - baseTemplateDate;
                         const newStartMs = floorBaseDateMs + taskOffsetMs;
                         const newEndMs = newStartMs + (tpl.duration * 24 * 60 * 60 * 1000);
-
                         newTask.startDate = new Date(newStartMs).toISOString().split('T')[0];
                         newTask.endDate = new Date(newEndMs).toISOString().split('T')[0];
                         
-                        // Update Dependencies
                         if (newTask.dependencies) {
                             newTask.dependencies = newTask.dependencies.map(d => {
                                 if (d.includes('3.X')) return d.replace('3.X', `3.${f}`);
-                                // If depends on typical floor summary
                                 if (d === '3.X') return floorSummaryId;
                                 return d;
                             });
                         }
-                        
-                        // Link vertical logic (e.g. Floor 2 Columns depend on Floor 1 Columns)
-                        // Only apply to structural items (Concrete/Formwork) to allow staggering
                         if (f > 1 && (newTask.activity.includes('Column') || newTask.activity.includes('Slab'))) {
                             const prevFloorTask = `3.${f-1}${suffix}`;
                             newTask.dependencies.push(prevFloorTask);
                         }
-
                         expandedFloors.push(newTask);
                     });
                 }
             }
 
-            // 3. Shift Future Phases (Roof/Exterior - Task 4, 5)
             let postShiftMs = 0;
             if (expandedFloors.length > 0) {
-                // Find the end of the structure of the last floor
                 const lastFloorStructure = expandedFloors.filter(t => t.activity.includes('Slab') || t.activity.includes('Concrete'));
                 const lastFloorEnd = lastFloorStructure.reduce((max, t) => new Date(t.endDate) > max ? new Date(t.endDate) : max, new Date(0));
-                
-                const postTasks = otherItems.filter((i: any) => {
-                        const mainId = parseInt(i.taskId.split('.')[0]);
-                        return mainId >= 4;
-                });
+                const postTasks = otherItems.filter((i: any) => parseInt(i.taskId.split('.')[0]) >= 4);
 
                 if (postTasks.length > 0) {
                         const firstPostStart = postTasks.reduce((min: Date, t: any) => {
@@ -651,7 +571,6 @@ export const generateSchedule = async (
                 }
             }
 
-            // Apply Shift
             otherItems = otherItems.map((i: any) => {
                     const mainId = parseInt(i.taskId.split('.')[0]);
                     if (mainId >= 4 && postShiftMs > 0) {
@@ -662,10 +581,8 @@ export const generateSchedule = async (
                     return i;
             });
 
-            // 4. Combine Everything
             const superSummary = otherItems.find((i:any) => i.taskId === '3');
             if (!superSummary && expandedFloors.length > 0) {
-                // Create implicit summary if missing
                 const start = expandedFloors[0].startDate;
                 const end = expandedFloors[expandedFloors.length-1].endDate;
                     finalScheduleItems.push({
@@ -683,14 +600,11 @@ export const generateSchedule = async (
                         notes: "Generated Summary"
                     });
             }
-            
             finalScheduleItems = [...finalScheduleItems, ...otherItems, ...expandedFloors];
-
         } else {
             finalScheduleItems = items;
         }
 
-        // Strict Hierarchical Sort (1, 1.1, 1.1.1, 1.2, ...)
         finalScheduleItems.sort((a: any, b: any) => {
             const partsA = a.taskId.split('.').map((n: string) => parseFloat(n) || 0);
             const partsB = b.taskId.split('.').map((n: string) => parseFloat(n) || 0);
@@ -736,7 +650,6 @@ export const generateTakeoff = async (
   contractMimeType?: string
 ): Promise<TakeoffResult> => {
   
-  // API KEY CHECK
   const apiKey = getApiKey();
   
   const rebarInstruction = includeRebar 
@@ -748,12 +661,10 @@ export const generateTakeoff = async (
       parts.push({ text: `\n--- FILE ${index + 1}: ${file.fileName} ---\n` });
       
       if (file.mimeType === 'application/cad-text') {
-          // It's raw text extracted from CAD
-          parts.push({ text: `[RAW CAD DATA STREAM]\nThe following is TEXT extracted from the internal binary of the CAD file. \nLook for Layer Names (e.g., "A-WALL", "S-COL"), Text Notes, and Block Attributes to infer scope and materials:\n\n${file.data}` });
+          parts.push({ text: `[RAW CAD DATA STREAM]\n${file.data}` });
       } else if (SUPPORTED_VISUAL_MIME_TYPES.includes(file.mimeType)) {
           parts.push({ inlineData: { mimeType: file.mimeType, data: file.data } });
       } else {
-          // Fallback for unknowns
           parts.push({ text: `[SYSTEM: Unknown Binary File '${file.fileName}']` });
       }
   });
@@ -815,8 +726,7 @@ export const generateTakeoff = async (
     
     ${rebarInstruction}
     ${contractBase64Data ? "**MATCHING**: Map items to Contract BOQ." : ""}
-    Output strictly valid JSON. Do not include markdown formatting. Keep descriptions concise.
-    Ensure all fields have proper values. Do not use incomplete JSON structure like "key": or "key": }. Use null if value is missing.
+    Output strictly valid JSON.
   `;
 
   const response = await generateWithFallback(apiKey, {
@@ -840,14 +750,9 @@ export const generateTakeoff = async (
     res.appMode = appMode;
     res.isPaid = false;
 
-    // Ensure quantities are numbers and process floor multiplication if AI missed it
     if (res.items) {
         res.items = res.items.map((item: any) => {
             let qty = item.quantity || 0;
-            // Double check if typical floor multiplication happened
-            if (floorCount > 1 && item.category === 'Superstructure' && !item.billItemDescription.includes(`x${floorCount}`)) {
-                // This is a safety heuristic; AI usually handles it via prompt
-            }
             return {
                 ...item,
                 description: item.billItemDescription || item.description || "Item",
@@ -867,7 +772,6 @@ export const generateTakeoff = async (
 
 export const getRateSuggestion = async (itemDescription: string, currency: string = 'ETB'): Promise<string> => {
     try {
-        // CALL SERVERLESS BACKEND INSTEAD OF CLIENT SIDE SDK
         const response = await fetch('/api/rates', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

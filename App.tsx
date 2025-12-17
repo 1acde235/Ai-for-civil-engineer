@@ -11,7 +11,7 @@ import { DisclaimerModal } from './components/DisclaimerModal';
 import { DashboardView } from './components/DashboardView'; 
 import { TutorialModal } from './components/TutorialModal';
 import { ChatSupport } from './components/ChatSupport'; 
-import { MarketingGenerator } from './components/MarketingGenerator'; // Import
+import { MarketingGenerator } from './components/MarketingGenerator'; 
 import { generateTakeoff, generateSchedule, FileInput } from './services/geminiService';
 import { AppState, TakeoffResult, UploadedFile, AppMode } from './types';
 import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft as ArrowBack, RotateCw, Settings, PlayCircle, Loader2 } from 'lucide-react';
@@ -26,7 +26,7 @@ const SAMPLE_PROJECT: TakeoffResult = {
     id: "SAMPLE-VILLA-001",
     projectName: "G+1 Modern Villa (Sample)",
     date: new Date().toISOString(),
-    isPaid: false, // Locked so they still have to buy to export!
+    isPaid: false, 
     appMode: AppMode.SCHEDULING,
     summary: "Sample Project generated for demonstration.",
     unitSystem: 'metric',
@@ -89,9 +89,7 @@ const App: React.FC = () => {
     return saved ? { ...defaults, ...JSON.parse(saved) } : defaults; 
   });
 
-  // STORE LAST CONFIGURATION FOR QUICK RESCHEDULE
   const [lastAnalysisConfig, setLastAnalysisConfig] = useState<any>(null);
-  // Auto-Retry Countdown State
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
   useEffect(() => {
@@ -138,7 +136,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [appState]);
 
-  // ON MOUNT: Check if API Key is configured
   useEffect(() => {
       const localKey = localStorage.getItem('constructAi_customApiKey');
       const envKey = process.env.API_KEY;
@@ -151,14 +148,12 @@ const App: React.FC = () => {
       }
   }, [appState]);
 
-  // AUTO RETRY TIMER LOGIC
   useEffect(() => {
       if (retryCountdown === null) return;
       if (retryCountdown > 0) {
           const timer = setTimeout(() => setRetryCountdown(retryCountdown - 1), 1000);
           return () => clearTimeout(timer);
       } else {
-          // Timer hit 0, trigger retry
           handleRetryAnalysis();
           setRetryCountdown(null);
       }
@@ -237,7 +232,6 @@ const App: React.FC = () => {
       setShowSettings(false);
   };
 
-  // --- DATA PORTABILITY LOGIC ---
   const handleExportBackup = () => {
       const backupData = {
           version: "1.0",
@@ -251,7 +245,7 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ConstructAI_Backup_${new Date().toISOString().split('T')[0]}.cai`; // Custom extension .cai
+      a.download = `ConstructAI_Backup_${new Date().toISOString().split('T')[0]}.cai`; 
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -271,7 +265,6 @@ const App: React.FC = () => {
               }
 
               if (window.confirm(`Restore Backup?\n\nFound: ${data.projects.length} Projects, ${data.credits} Credits.\n\nWARNING: This will merge with your current data.`)) {
-                  // Merge logic (Keep highest credits, merge unique projects)
                   setCredits(prev => Math.max(prev, data.credits || 0));
                   
                   setSavedProjects(prev => {
@@ -295,10 +288,8 @@ const App: React.FC = () => {
   };
 
   const handleTryDemo = () => {
-    // Instead of a fake upload, we load the FULL SAMPLE PROJECT immediately.
-    // This gives instant gratification and trust.
     setTakeoffData(SAMPLE_PROJECT);
-    setAppMode(AppMode.SCHEDULING); // Shows the cool Gantt chart first
+    setAppMode(AppMode.SCHEDULING); 
     setAppState(AppState.RESULTS);
     showToast("Sample Project Loaded! Try exploring the Schedule tab.");
   };
@@ -310,14 +301,13 @@ const App: React.FC = () => {
     
     if (drawings.length === 0) return;
 
-    // Enhanced MIME type list for Android compatibility
+    // Comprehensive list of MIME types for mobile compatibility
     const validMimeTypes = [
         'image/png', 'image/jpeg', 'application/pdf', 'application/x-pdf', 
         'application/zip', 'application/x-zip-compressed', 'application/octet-stream', 
         'application/dxf', 'image/vnd.dwg', 'application/vnd.ms-project', 
         'application/xml', 'text/xml', 
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv',
-        // Mobile CAD Mime Types
         'application/x-autocad', 'application/dwg', 'application/x-dwg', 'application/acad', 'application/x-acad'
     ];
     const validExtensions = ['.zip', '.pdf', '.png', '.jpg', '.jpeg', '.dwg', '.dxf', '.mpp', '.xml', '.xlsx', '.xls', '.csv'];
@@ -381,7 +371,6 @@ const App: React.FC = () => {
         const lowerName = file.name.toLowerCase();
         const ext = '.' + lowerName.split('.').pop();
 
-        // Strategy 0: Excel / CSV parsing to Text (Best for Schedule Import)
         if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -392,8 +381,8 @@ const App: React.FC = () => {
                 const csv = XLSX.utils.sheet_to_csv(worksheet);
                 resolve({
                     name: file.name,
-                    type: 'text/csv', // Tell AI this is CSV data
-                    data: csv, // Pass text directly
+                    type: 'text/csv', 
+                    data: csv,
                     url: URL.createObjectURL(file)
                 });
             };
@@ -402,7 +391,6 @@ const App: React.FC = () => {
             return;
         }
 
-        // Strategy 0.5: MS Project XML parsing to Text
         if (ext === '.xml') {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -419,18 +407,16 @@ const App: React.FC = () => {
             return;
         }
 
-        // Strategy 1: Text-based CAD (DXF)
         if (lowerName.endsWith('.dxf')) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const text = e.target?.result as string;
-                // Truncate if too huge to prevent token overflow, preserve header and entities
                 const truncated = text.length > 200000 ? text.substring(0, 200000) + "...[Truncated]" : text;
                 resolve({
                     name: file.name,
-                    type: 'application/cad-text', // Custom type flag for text data
+                    type: 'application/cad-text', 
                     data: truncated,
-                    url: URL.createObjectURL(file) // For preview icon
+                    url: URL.createObjectURL(file) 
                 });
             };
             reader.onerror = reject;
@@ -438,25 +424,19 @@ const App: React.FC = () => {
             return;
         }
 
-        // Strategy 2: Binary CAD (DWG) - Extract Strings
-        // We cannot read binary directly in frontend LLM, but we can extract Metadata strings (Layers, Text Blocks)
         if (lowerName.endsWith('.dwg')) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const buffer = e.target?.result as ArrayBuffer;
                 const uint8 = new Uint8Array(buffer);
                 
-                // Simple string extraction for binary files
-                // We look for sequences of printable characters to grab Layer Names, Materials, etc.
                 let extracted = "";
                 let currentSeq = "";
                 for (let i = 0; i < uint8.length; i++) {
                     const code = uint8[i];
-                    // Printable ASCII range (32-126)
                     if (code >= 32 && code <= 126) {
                         currentSeq += String.fromCharCode(code);
                     } else {
-                        // Filter out short noise, keep meaningful words
                         if (currentSeq.length > 4) { 
                             extracted += currentSeq + "\n";
                         }
@@ -464,12 +444,11 @@ const App: React.FC = () => {
                     }
                 }
                 
-                // Limit size
                 const finalData = extracted.length > 150000 ? extracted.substring(0, 150000) + "...[Truncated]" : extracted;
 
                 resolve({
                     name: file.name,
-                    type: 'application/cad-text', // Mark as extracted text
+                    type: 'application/cad-text', 
                     data: finalData,
                     url: URL.createObjectURL(file)
                 });
@@ -479,7 +458,6 @@ const App: React.FC = () => {
             return;
         }
 
-        // Strategy 3: Standard Visual (PDF/IMG/MPP)
         const reader = new FileReader();
         reader.onload = (e) => {
           if (e.target?.result) {
@@ -523,7 +501,6 @@ const App: React.FC = () => {
   ) => {
     if (uploadedFiles.length === 0) return;
 
-    // SAVE CONFIG FOR QUICK RESCHEDULE
     setLastAnalysisConfig({
         instructions, 
         scopes, 
@@ -545,7 +522,6 @@ const App: React.FC = () => {
       uploadedFiles.forEach(f => {
           let mime = f.type;
           
-          // Pass the custom text type directly if set, otherwise map standard mimes
           if (mime !== 'application/cad-text' && mime !== 'text/csv' && mime !== 'application/xml') {
               const name = f.name.toLowerCase();
               if (name.endsWith('.pdf')) mime = 'application/pdf';
@@ -566,9 +542,7 @@ const App: React.FC = () => {
       
       let newResult: TakeoffResult;
 
-      // Handle both Scheduling modes
       if (appMode === AppMode.SCHEDULING || appMode === AppMode.RESCHEDULING) {
-         // Force 'reschedule' detail level if AppMode is RESCHEDULING
          const effectiveDetailLevel = appMode === AppMode.RESCHEDULING ? 'reschedule' : scheduleDetailLevel;
          
          newResult = await generateSchedule(
@@ -633,21 +607,17 @@ const App: React.FC = () => {
       setAppState(AppState.RESULTS);
     } catch (err: any) {
       console.error(err);
-      // Ensure errMsg is a string
       const errMsg = (err.message && typeof err.message === 'string') ? err.message : JSON.stringify(err);
       
-      // RATE LIMIT / 429 HANDLING
-      if (errMsg.includes("429") || errMsg.includes("busy") || errMsg.includes("quota")) {
-          // Trigger Auto-Retry Countdown
+      if (errMsg.includes("429") || errMsg.includes("busy") || errMsg.includes("quota") || errMsg.includes("fetch")) {
           setRetryCountdown(15); 
-          setError("Server Busy. Retrying automatically...");
+          setError(errMsg.includes("fetch") ? "Network connection unstable. Auto-retrying..." : "Server Busy. Retrying automatically...");
       } else {
           setError(errMsg);
       }
       
-      // CRITICAL FIX: If API key is missing, go to error state directly to show button
       if (errMsg.includes("API Key") || errMsg.includes("API_KEY")) {
-          setShowSettings(true); // Open settings immediately
+          setShowSettings(true); 
       }
       setAppState(AppState.ERROR);
     } finally {
@@ -661,7 +631,6 @@ const App: React.FC = () => {
       setAppState(AppState.ANALYZING);
       
       try {
-          // Prepare Files
           const filesToSend: FileInput[] = [];
           uploadedFiles.forEach(f => {
               let mime = f.type;
@@ -674,20 +643,19 @@ const App: React.FC = () => {
               filesToSend.push({ fileName: f.name, data: f.data, mimeType: mime });
           });
 
-          // Use Cached Config but Override Detail Level
           const newResult = await generateSchedule(
              filesToSend,
              lastAnalysisConfig.instructions,
              lastAnalysisConfig.floorCount,
              lastAnalysisConfig.basementCount,
-             mode, // OVERRIDE
+             mode, 
              lastAnalysisConfig.projectType,
              lastAnalysisConfig.calendarSettings
           );
 
           const finalResult = {
               ...newResult,
-              isPaid: takeoffData?.isPaid || false, // Preserve paid status
+              isPaid: takeoffData?.isPaid || false, 
               sourceFiles: uploadedFiles.map(f => f.name),
               appMode: AppMode.SCHEDULING
           };
@@ -704,13 +672,12 @@ const App: React.FC = () => {
       } catch (err: any) {
           console.error(err);
           setError("Quick Reschedule Failed: " + err.message);
-          setAppState(AppState.ERROR); // Go back to error state
+          setAppState(AppState.ERROR); 
       }
   };
 
-  // RETRY WITHOUT RE-UPLOAD LOGIC
   const handleRetryAnalysis = () => {
-      setRetryCountdown(null); // Clear auto timer if manually clicked
+      setRetryCountdown(null); 
       if (lastAnalysisConfig) {
           handleStartAnalysis(
               lastAnalysisConfig.instructions,
@@ -725,7 +692,6 @@ const App: React.FC = () => {
               lastAnalysisConfig.calendarSettings
           );
       } else {
-          // Fallback if config lost
           handleStartAnalysis("", [], false, 1, 0, 3, 'metric', 'master', 'building');
       }
   };
@@ -749,7 +715,6 @@ const App: React.FC = () => {
   const handleRedeemCode = (code: string): boolean => {
       if (usedCodes.includes(code)) return false;
 
-      // 1. Check Custom/Hardcoded Codes
       if (customCodes[code]) {
           const amount = customCodes[code];
           setCredits(prev => prev + amount);
@@ -758,7 +723,6 @@ const App: React.FC = () => {
           return true;
       }
 
-      // 2. Check Cryptographic Signature Codes
       const signedAmount = verifySignedCode(code);
       if (signedAmount) {
           setCredits(prev => prev + signedAmount);
@@ -808,12 +772,9 @@ const App: React.FC = () => {
   };
 
   const handleReschedule = () => {
-      // Keep existing files but go back to upload to allow adding MS Project/Excel files
-      // We do NOT clear uploadedFiles here
       setAppState(AppState.UPLOAD);
   };
 
-  // --- NEW MARKETING ROUTE HANDLER ---
   const handleOpenMarketing = () => {
       setAppState(AppState.MARKETING);
   };
@@ -821,7 +782,6 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col relative font-sans text-slate-900 bg-slate-50 selection:bg-brand-500 selection:text-white">
       
-      {/* GLOBAL TOAST */}
       {toastMessage && (
         <div className="fixed top-6 right-6 z-[100] bg-slate-800 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center animate-in slide-in-from-right-10 duration-300">
            <CheckCircle className="w-5 h-5 mr-3 text-green-400" />
@@ -829,7 +789,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* NAVBAR */}
       {appState !== AppState.LANDING && appState !== AppState.MARKETING && (
         <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 h-16 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 h-full flex justify-between items-center">
@@ -871,7 +830,6 @@ const App: React.FC = () => {
         </nav>
       )}
 
-      {/* MAIN CONTENT AREA */}
       <main className="flex-1 flex flex-col relative">
         
         {appState === AppState.LANDING && (
@@ -880,7 +838,7 @@ const App: React.FC = () => {
              onLogin={() => setAppState(AppState.DASHBOARD)} 
              onTryDemo={handleTryDemo}
              onOpenGuide={() => setShowTutorial(true)}
-             onOpenMarketing={() => setAppState(AppState.MARKETING)} // Pass new handler
+             onOpenMarketing={() => setAppState(AppState.MARKETING)} 
           />
         )}
 
@@ -894,11 +852,10 @@ const App: React.FC = () => {
                 onOpenGuide={() => setShowTutorial(true)}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackup}
-                onLoadSample={handleTryDemo} // Pass sample handler to dashboard
+                onLoadSample={handleTryDemo} 
              />
         )}
 
-        {/* --- MARKETING GENERATOR VIEW --- */}
         {appState === AppState.MARKETING && (
             <MarketingGenerator onBack={() => setAppState(AppState.LANDING)} />
         )}
@@ -1001,7 +958,7 @@ const App: React.FC = () => {
              fileUrl={uploadedFiles[0]?.url}
              fileType={uploadedFiles[0]?.type}
              onCancel={() => {
-                 setAppState(AppState.UPLOAD); // Reset to upload
+                 setAppState(AppState.UPLOAD); 
                  setError(null);
              }}
           />
@@ -1041,7 +998,7 @@ const App: React.FC = () => {
              <h3 className="text-xl font-bold text-slate-800 mb-2">Analysis Failed</h3>
              <p className="text-slate-500 max-w-md mb-6">{error || "An unexpected error occurred."}</p>
              
-             {/* RETRY COUNTDOWN UI FOR 429 ERRORS */}
+             {/* RETRY COUNTDOWN UI */}
              {retryCountdown !== null ? (
                  <div className="mb-6 flex flex-col items-center animate-in fade-in">
                      <div className="w-12 h-12 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin mb-3"></div>
