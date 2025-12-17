@@ -140,10 +140,10 @@ const safeJsonParse = (input: string): any => {
 const isQuotaError = (error: any): boolean => {
     const msg = (error.message || "").toLowerCase();
     const status = error.status || error.code || (error.response ? error.response.status : 0);
-    return status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded");
+    return status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded") || msg.includes("busy");
 };
 
-// --- GENERIC GENERATION FUNCTION WITH FALLBACK ---
+// --- GENERIC GENERATION FUNCTION WITH FALLBACK & BACKOFF ---
 const generateWithFallback = async (
     apiKey: string,
     params: {
@@ -151,13 +151,14 @@ const generateWithFallback = async (
         contents: any[];
         schema: Schema;
     },
-    // SWAPPED: Flash is now Primary (Stability), Pro is Fallback (Precision)
+    // Flash is Primary (Stability), Pro is Fallback (Precision)
     primaryModel = "gemini-2.5-flash", 
     fallbackModel = "gemini-3-pro-preview"
 ): Promise<any> => {
     const ai = new GoogleGenAI({ apiKey });
 
-    const callModel = async (model: string, retries = 1): Promise<any> => {
+    // Retry Logic with Delay
+    const callModel = async (model: string, retries: number): Promise<any> => {
         try {
             const response = await ai.models.generateContent({
                 model: model,
@@ -167,17 +168,20 @@ const generateWithFallback = async (
                     responseMimeType: "application/json",
                     responseSchema: params.schema,
                     temperature: 0.1,
-                    maxOutputTokens: 8192,
+                    // Note: Removing maxOutputTokens helps prevent premature truncation
                 }
             });
             return response;
         } catch (error: any) {
             if (retries > 0) {
-                // If it's NOT a hard quota error (e.g. network blip), verify and retry same model
-                if (!isQuotaError(error)) {
-                    await new Promise(r => setTimeout(r, 2000));
-                    return callModel(model, retries - 1);
-                }
+                // If it's a quota/busy error, wait longer (4-5s). Otherwise wait short (2s).
+                const isRateLimit = isQuotaError(error);
+                const waitTime = isRateLimit ? 4500 : 2000;
+                
+                console.warn(`Model ${model} failed (RateLimit: ${isRateLimit}). Retrying in ${waitTime}ms... (${retries} attempts left).`);
+                
+                await new Promise(r => setTimeout(r, waitTime));
+                return callModel(model, retries - 1);
             }
             throw error;
         }
@@ -185,16 +189,18 @@ const generateWithFallback = async (
 
     try {
         console.log(`Attempting with primary model: ${primaryModel}`);
-        return await callModel(primaryModel);
+        // 1. Try Primary Model with 2 retries (Total ~10s effort)
+        return await callModel(primaryModel, 2);
     } catch (error: any) {
-        console.warn(`Primary model ${primaryModel} failed. Switching to fallback: ${fallbackModel}. Error:`, error.message);
+        console.warn(`Primary model ${primaryModel} failed. Switching to fallback: ${fallbackModel}.`);
         
-        // Retry immediately with fallback model
+        // 2. Try Fallback Model with 1 retry (Total ~5s effort)
         try {
             return await callModel(fallbackModel, 1);
         } catch (fallbackError: any) {
             if (isQuotaError(fallbackError)) {
-                throw new Error("Google AI System Busy (429). Please wait 30 seconds or add billing to your API Key.");
+                // User-friendly error message for 429
+                throw new Error("Google AI servers are currently busy (429). Please wait 30 seconds and try again.");
             }
             throw fallbackError;
         }

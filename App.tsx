@@ -663,6 +663,27 @@ const App: React.FC = () => {
       }
   };
 
+  // RETRY WITHOUT RE-UPLOAD LOGIC
+  const handleRetryAnalysis = () => {
+      if (lastAnalysisConfig) {
+          handleStartAnalysis(
+              lastAnalysisConfig.instructions,
+              lastAnalysisConfig.scopes,
+              lastAnalysisConfig.includeRebar,
+              lastAnalysisConfig.floorCount,
+              lastAnalysisConfig.basementCount,
+              lastAnalysisConfig.storyHeight,
+              lastAnalysisConfig.unitSystem,
+              lastAnalysisConfig.scheduleDetailLevel,
+              lastAnalysisConfig.projectType,
+              lastAnalysisConfig.calendarSettings
+          );
+      } else {
+          // Fallback if config lost
+          handleStartAnalysis("", [], false, 1, 0, 3, 'metric', 'master', 'building');
+      }
+  };
+
   const handleUnlockProject = (): boolean => {
       if (credits >= 1) {
           setCredits(prev => prev - 1);
@@ -975,7 +996,12 @@ const App: React.FC = () => {
              <p className="text-slate-500 max-w-md mb-6">{error || "An unexpected error occurred."}</p>
              <div className="flex flex-col space-y-3">
                  <div className="flex space-x-3 justify-center">
-                    <button onClick={() => setAppState(AppState.UPLOAD)} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-2 rounded-lg font-bold">Try Again</button>
+                    <button onClick={() => setAppState(AppState.UPLOAD)} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-2 rounded-lg font-bold">New Upload</button>
+                    {lastAnalysisConfig && (
+                        <button onClick={handleRetryAnalysis} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700 shadow-md flex items-center">
+                            <RotateCw className="w-4 h-4 mr-2" /> Retry Analysis
+                        </button>
+                    )}
                     {(error?.includes("API_KEY") || error?.includes("API Key")) && (
                         <button onClick={() => setShowSettings(true)} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700">Enter API Key</button>
                     )}
