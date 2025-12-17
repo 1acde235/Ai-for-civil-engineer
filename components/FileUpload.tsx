@@ -89,16 +89,18 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, error }) =
     onFileSelect(drawingFiles, specFile || undefined, undefined);
   };
 
-  // ANDROID FRIENDLY ACCEPT STRING
-  // Includes explicit extensions AND a wide range of MIME types used for CAD files
+  // ANDROID FRIENDLY ACCEPT STRING with Wildcard Fallback
+  // Adding */* forces Android to open the file picker for any file, solving the "greyed out" DWG issue.
+  // Validation happens in App.tsx
   const MOBILE_ACCEPT_STRING = [
       ".pdf", ".png", ".jpg", ".jpeg", ".zip", 
       ".dwg", ".dxf", ".mpp", ".xml", ".xlsx", ".xls", ".csv",
       "application/pdf", "image/*", "application/zip", "application/x-zip-compressed",
-      "application/octet-stream", // Critical for Android Unknowns
+      "application/octet-stream",
       "application/x-autocad", "image/vnd.dwg", "application/dwg", "application/x-dwg",
       "application/acad", "application/x-acad", "application/autocad_dwg",
-      "application/dxf", "application/x-dxf", "model/vnd.dwg"
+      "application/dxf", "application/x-dxf", "model/vnd.dwg",
+      "*/*" // NUCLEAR OPTION for Android compatibility
   ].join(",");
 
   return (

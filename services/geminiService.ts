@@ -4,14 +4,27 @@ import { TakeoffResult, TakeoffItem, RebarItem, TechnicalQuery, ScheduleTask, Ap
 
 // --- HELPER: API KEY VALIDATION ---
 const getApiKey = (): string => {
+    // 1. Check Local Storage (User Override)
     const localKey = localStorage.getItem('constructAi_customApiKey');
     if (localKey && localKey.startsWith('AIza')) {
         return localKey;
     }
+
+    // 2. Check Standard Process Env (Injected by Vite define)
     const envKey = process.env.API_KEY;
-    if (envKey && envKey.trim() !== '' && !envKey.includes('undefined')) {
+    if (envKey && typeof envKey === 'string' && envKey.length > 10 && !envKey.includes('undefined')) {
         return envKey;
     }
+
+    // 3. Fallback: Check Vite specific import.meta.env (if VITE_ prefix used)
+    try {
+        // @ts-ignore
+        if (import.meta.env && import.meta.env.VITE_API_KEY) {
+            // @ts-ignore
+            return import.meta.env.VITE_API_KEY;
+        }
+    } catch (e) {}
+
     throw new Error("API_KEY_MISSING");
 };
 
@@ -104,7 +117,9 @@ const generateWithFallback = async (
             });
             return response;
         } catch (error: any) {
-            if (attemptsLeft > 0 && isRetryableError(error)) {
+            const isFetchError = error.message && error.message.includes("Failed to fetch");
+            
+            if (attemptsLeft > 0 && (isRetryableError(error) || isFetchError)) {
                 console.warn(`Retryable Error (${model}): ${error.message}. Waiting ${delayMs}ms...`);
                 await new Promise(r => setTimeout(r, delayMs));
                 // Exponential Backoff: 2s -> 4s -> 8s -> 16s
@@ -354,27 +369,27 @@ const SUPPORTED_VISUAL_MIME_TYPES = [
 ];
 
 export const generateInsights = async (items: TakeoffItem[]): Promise<Insight[]> => {
-    const apiKey = getApiKey();
-    const ai = new GoogleGenAI({ apiKey });
-    const model = "gemini-2.5-flash"; 
-
-    const summary = items.slice(0, 50).map(i => `- ${i.billItemDescription || i.description}: ${i.quantity} ${i.unit} (${i.category})`).join('\n');
-
-    const prompt = `
-        Act as a **Senior Construction Commercial Manager**.
-        Review this partial BOQ and generated Takeoff data.
-        
-        **MISSION**:
-        Provide "Value Engineering" (Cost Saving) and "Risk Intelligence" insights.
-        
-        **INPUT DATA**:
-        ${summary}
-
-        **OUTPUT**:
-        Return a JSON object containing exactly 4 detailed insights (2 Savings, 2 Risks).
-    `;
-
     try {
+        const apiKey = getApiKey();
+        const ai = new GoogleGenAI({ apiKey });
+        const model = "gemini-2.5-flash"; 
+
+        const summary = items.slice(0, 50).map(i => `- ${i.billItemDescription || i.description}: ${i.quantity} ${i.unit} (${i.category})`).join('\n');
+
+        const prompt = `
+            Act as a **Senior Construction Commercial Manager**.
+            Review this partial BOQ and generated Takeoff data.
+            
+            **MISSION**:
+            Provide "Value Engineering" (Cost Saving) and "Risk Intelligence" insights.
+            
+            **INPUT DATA**:
+            ${summary}
+
+            **OUTPUT**:
+            Return a JSON object containing exactly 4 detailed insights (2 Savings, 2 Risks).
+        `;
+
         const response = await ai.models.generateContent({
             model: model,
             contents: [{ role: "user", parts: [{ text: prompt }] }],
