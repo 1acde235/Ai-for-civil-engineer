@@ -14,7 +14,7 @@ import { ChatSupport } from './components/ChatSupport';
 import { MarketingGenerator } from './components/MarketingGenerator'; // Import
 import { generateTakeoff, generateSchedule, FileInput } from './services/geminiService';
 import { AppState, TakeoffResult, UploadedFile, AppMode } from './types';
-import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft, RotateCw, Settings, PlayCircle, Loader2 } from 'lucide-react';
+import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft as ArrowBack, RotateCw, Settings, PlayCircle, Loader2 } from 'lucide-react';
 import { Logo } from './components/Logo';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -310,7 +310,16 @@ const App: React.FC = () => {
     
     if (drawings.length === 0) return;
 
-    const validMimeTypes = ['image/png', 'image/jpeg', 'application/pdf', 'application/x-pdf', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream', 'application/dxf', 'image/vnd.dwg', 'application/vnd.ms-project', 'application/xml', 'text/xml', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'];
+    // Enhanced MIME type list for Android compatibility
+    const validMimeTypes = [
+        'image/png', 'image/jpeg', 'application/pdf', 'application/x-pdf', 
+        'application/zip', 'application/x-zip-compressed', 'application/octet-stream', 
+        'application/dxf', 'image/vnd.dwg', 'application/vnd.ms-project', 
+        'application/xml', 'text/xml', 
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv',
+        // Mobile CAD Mime Types
+        'application/x-autocad', 'application/dwg', 'application/x-dwg', 'application/acad', 'application/x-acad'
+    ];
     const validExtensions = ['.zip', '.pdf', '.png', '.jpg', '.jpeg', '.dwg', '.dxf', '.mpp', '.xml', '.xlsx', '.xls', '.csv'];
 
     const processedFiles: UploadedFile[] = [];
@@ -319,6 +328,9 @@ const App: React.FC = () => {
         for (const file of drawings) {
             const ext = '.' + file.name.split('.').pop()?.toLowerCase();
             
+            // Allow if extension matches OR if mime type matches OR if type is empty (common on Android for binary)
+            const isValid = validExtensions.includes(ext) || validMimeTypes.includes(file.type) || !file.type;
+
             if (ext === '.zip' || file.type.includes('zip')) {
                 const zip = await JSZip.loadAsync(file);
                 for (const filename of Object.keys(zip.files)) {
@@ -333,7 +345,7 @@ const App: React.FC = () => {
                         processedFiles.push(uf);
                     }
                 }
-            } else if (validExtensions.includes(ext) || validMimeTypes.includes(file.type)) {
+            } else if (isValid) {
                 const uf = await processSingleFile(file);
                 processedFiles.push(uf);
             }
@@ -474,9 +486,19 @@ const App: React.FC = () => {
             const resultStr = e.target.result as string;
             const base64Data = resultStr.includes(',') ? resultStr.split(',')[1] : resultStr;
             const fileUrl = URL.createObjectURL(file);
+            
+            // Fix: On Android, sometimes type is empty for images/PDFs downloaded from WhatsApp
+            // We infer it from extension if missing
+            let finalType = file.type;
+            if (!finalType || finalType === 'application/octet-stream') {
+                if (lowerName.endsWith('.pdf')) finalType = 'application/pdf';
+                else if (lowerName.endsWith('.png')) finalType = 'image/png';
+                else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) finalType = 'image/jpeg';
+            }
+
             resolve({
               name: file.name,
-              type: file.type || 'application/octet-stream', 
+              type: finalType || 'application/octet-stream', 
               data: base64Data, 
               url: fileUrl
             });
@@ -887,7 +909,7 @@ const App: React.FC = () => {
                   onClick={() => setAppState(AppState.DASHBOARD)}
                   className="absolute top-6 left-6 text-slate-400 hover:text-slate-700 flex items-center text-sm font-bold"
                 >
-                   <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                   <ArrowBack className="w-4 h-4 mr-2" /> Back
                 </button>
 
                 <div className="text-center mb-10 max-w-lg">
@@ -953,7 +975,7 @@ const App: React.FC = () => {
              <div className="w-full max-w-4xl">
                  <div className="flex items-center mb-8">
                      <button onClick={() => setAppState(AppState.MODE_SELECT)} className="mr-4 p-2 bg-white border border-slate-200 rounded-full hover:bg-slate-100 transition-colors">
-                         <ArrowLeft className="w-5 h-5 text-slate-500" />
+                         <ArrowBack className="w-5 h-5 text-slate-500" />
                      </button>
                      <h2 className="text-2xl font-bold text-slate-900">
                          {isMerging ? "Add More Drawings" : "Upload Documents"}

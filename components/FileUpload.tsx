@@ -89,6 +89,18 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, error }) =
     onFileSelect(drawingFiles, specFile || undefined, undefined);
   };
 
+  // ANDROID FRIENDLY ACCEPT STRING
+  // Includes explicit extensions AND a wide range of MIME types used for CAD files
+  const MOBILE_ACCEPT_STRING = [
+      ".pdf", ".png", ".jpg", ".jpeg", ".zip", 
+      ".dwg", ".dxf", ".mpp", ".xml", ".xlsx", ".xls", ".csv",
+      "application/pdf", "image/*", "application/zip", "application/x-zip-compressed",
+      "application/octet-stream", // Critical for Android Unknowns
+      "application/x-autocad", "image/vnd.dwg", "application/dwg", "application/x-dwg",
+      "application/acad", "application/x-acad", "application/autocad_dwg",
+      "application/dxf", "application/x-dxf", "model/vnd.dwg"
+  ].join(",");
+
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
       
@@ -102,7 +114,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, error }) =
           ref={drawingInputRef} 
           className="hidden" 
           multiple // ALLOW MULTIPLE FILES
-          accept=".pdf, .png, .jpg, .jpeg, .zip, .dwg, .dxf, .mpp, .xml, .xlsx, .xls, .csv" 
+          accept={MOBILE_ACCEPT_STRING} 
           onChange={handleDrawingChange}
         />
         
@@ -116,6 +128,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, error }) =
             </h3>
             <p className="text-slate-500 text-sm">
               Drawings (PDF, CAD), <strong>MS Project (.xml, .mpp)</strong>, or <strong>Excel Schedules</strong>.
+            </p>
+            <p className="text-[10px] text-brand-600 mt-2 font-bold bg-brand-50 inline-block px-2 py-1 rounded">
+                Works on Android / iOS / Desktop
             </p>
           </div>
         </div>
