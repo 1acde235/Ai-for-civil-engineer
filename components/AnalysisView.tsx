@@ -55,7 +55,8 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ fileName, fileUrl, f
 
   useEffect(() => {
     let delay = 0;
-    const totalDuration = 20000; // 20s simulation
+    // EXTENDED DURATION: 45 seconds to account for exponential backoff retries
+    const totalDuration = 45000; 
     const intervalTime = totalDuration / 100;
 
     // Progress Bar
@@ -66,10 +67,10 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ fileName, fileUrl, f
       });
     }, intervalTime);
 
-    // Timeout Warning after 25s
+    // Timeout Warning after 40s (increased from 25s)
     const timeoutTimer = setTimeout(() => {
         setShowTimeoutWarning(true);
-    }, 25000);
+    }, 40000);
 
     // Logs
     const randomLogs = [...activeLogs].sort(() => Math.random() - 0.5); 
@@ -123,7 +124,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ fileName, fileUrl, f
         {showTimeoutWarning && (
             <div className="mb-4 bg-amber-500/20 border border-amber-500/50 text-amber-200 px-4 py-2 rounded-lg flex items-center text-xs animate-bounce">
                 <AlertTriangle className="w-4 h-4 mr-2" />
-                <span>Taking longer than usual. Please wait or check your API Key / Connection.</span>
+                <span>High server load detected. Applying retries...</span>
             </div>
         )}
 

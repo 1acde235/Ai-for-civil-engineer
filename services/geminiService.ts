@@ -4,28 +4,20 @@ import { TakeoffResult, TakeoffItem, RebarItem, TechnicalQuery, ScheduleTask, Ap
 
 // --- HELPER: API KEY VALIDATION ---
 const getApiKey = (): string => {
-    // 1. Try Local Storage (User entered via Settings)
     const localKey = localStorage.getItem('constructAi_customApiKey');
     if (localKey && localKey.startsWith('AIza')) {
         return localKey;
     }
-
-    // 2. Try Environment Variable (Vite/Vercel)
     const envKey = process.env.API_KEY;
-    
     if (envKey && envKey.trim() !== '' && !envKey.includes('undefined')) {
         return envKey;
     }
-
     throw new Error("API_KEY_MISSING");
 };
 
-// --- HELPER: ROBUST JSON PARSER WITH AUTO-REPAIR ---
+// --- HELPER: ROBUST JSON PARSER ---
 const safeJsonParse = (input: string): any => {
-    // 1. Clean Markdown wrappers
     let clean = input.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    // 2. Heuristic: Find first { or [
     const firstBrace = clean.indexOf('{');
     const firstBracket = clean.indexOf('[');
     let startIdx = 0;
@@ -38,101 +30,28 @@ const safeJsonParse = (input: string): any => {
     }
     clean = clean.substring(startIdx);
 
-    // 3. Try standard parse first
     try {
         return JSON.parse(clean);
     } catch (e) {
-        // console.warn("JSON Parse failed. Attempting repairs...");
-    }
-
-    // 4. PRE-REPAIR: Fix Common Syntax Errors before balancing
-    // Fix: "key": } -> "key": null } (Missing value)
-    clean = clean.replace(/":\s*([}\]])/g, '": null$1');
-    // Fix: "key": , -> "key": null, (Missing value before comma)
-    clean = clean.replace(/":\s*,/g, '": null,');
-    // Fix: trailing commas , } -> }
-    clean = clean.replace(/,\s*([}\]])/g, '$1');
-
-    // 5. ADVANCED REPAIR: Handle Truncation (Open Strings & Brackets)
-    let inString = false;
-    let isEscaped = false;
-    const stack: string[] = [];
-    let i = 0;
-
-    // We rebuild the string char by char to track state accurately
-    while (i < clean.length) {
-        const char = clean[i];
+        // Repair attempts
+        clean = clean.replace(/":\s*([}\]])/g, '": null$1');
+        clean = clean.replace(/":\s*,/g, '": null,');
+        clean = clean.replace(/,\s*([}\]])/g, '$1');
         
-        if (inString) {
-            if (char === '\\' && !isEscaped) {
-                isEscaped = true;
-            } else if (char === '"' && !isEscaped) {
-                inString = false;
-            } else {
-                isEscaped = false;
-            }
-        } else {
-            if (char === '"') {
-                inString = true;
-            } else if (char === '{') {
-                stack.push('}');
-            } else if (char === '[') {
-                stack.push(']');
-            } else if (char === '}') {
-                if (stack.length > 0 && stack[stack.length - 1] === '}') stack.pop();
-            } else if (char === ']') {
-                if (stack.length > 0 && stack[stack.length - 1] === ']') stack.pop();
-            }
+        // Try closing truncated JSON
+        let openBraces = (clean.match(/{/g) || []).length;
+        let closeBraces = (clean.match(/}/g) || []).length;
+        let openBrackets = (clean.match(/\[/g) || []).length;
+        let closeBrackets = (clean.match(/\]/g) || []).length;
+        
+        while (openBraces > closeBraces) { clean += '}'; closeBraces++; }
+        while (openBrackets > closeBrackets) { clean += ']'; closeBrackets++; }
+
+        try {
+            return JSON.parse(clean);
+        } catch (finalError) {
+            throw new Error("The file analysis was interrupted. Please try again or reduce the number of files.");
         }
-        i++;
-    }
-
-    // Close open string if truncation happened inside a value
-    if (inString) {
-        clean += '"';
-    }
-
-    // Remove trailing comma if present at the very end of valid text
-    clean = clean.replace(/,\s*$/, '');
-
-    // CHECK FOR DANGLING KEYS / TRUNCATED VALUES
-    if (stack.length > 0 && stack[stack.length - 1] === '}') {
-        // Case 1: Ends with colon (e.g. "key":) -> Add null
-        if (clean.trim().endsWith(':')) {
-            clean += ' null';
-        } 
-        // Case 2: Ends with a string that is likely a key (e.g. { "key") -> Add : null
-        else {
-             const match = clean.match(/"([^"\\]*(\\.[^"\\]*)*)"\s*$/);
-             if (match) {
-                 const strIndex = match.index!;
-                 let j = strIndex - 1;
-                 while (j >= 0 && /\s/.test(clean[j])) j--;
-                 
-                 if (j >= 0) {
-                     const charBefore = clean[j];
-                     // If preceded by comma or opening brace, it's a key
-                     if (charBefore === ',' || charBefore === '{') {
-                         clean += ': null';
-                     }
-                 }
-             }
-        }
-    }
-
-    // Close remaining open brackets in reverse order
-    while (stack.length > 0) {
-        clean += stack.pop();
-    }
-
-    // 6. Final Attempt
-    try {
-        return JSON.parse(clean);
-    } catch (repairError) {
-        console.error("Auto-repair failed details:", clean.substring(Math.max(0, clean.length - 100)));
-        // If it looks like a valid partial object, we might return a partial result if logic allowed, 
-        // but for safety we throw the user-friendly error.
-        throw new Error("The analysis was interrupted or the file was too complex. Please try reducing the number of floors or file size.");
     }
 };
 
@@ -140,10 +59,10 @@ const safeJsonParse = (input: string): any => {
 const isQuotaError = (error: any): boolean => {
     const msg = (error.message || "").toLowerCase();
     const status = error.status || error.code || (error.response ? error.response.status : 0);
-    return status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded") || msg.includes("busy");
+    return status === 429 || status === 503 || msg.includes("quota") || msg.includes("resource exhausted") || msg.includes("429") || msg.includes("overloaded") || msg.includes("busy") || msg.includes("too many requests");
 };
 
-// --- GENERIC GENERATION FUNCTION WITH FALLBACK & BACKOFF ---
+// --- GENERIC GENERATION WITH EXPONENTIAL BACKOFF ---
 const generateWithFallback = async (
     apiKey: string,
     params: {
@@ -151,15 +70,15 @@ const generateWithFallback = async (
         contents: any[];
         schema: Schema;
     },
-    // Flash is Primary (Stability), Pro is Fallback (Precision)
     primaryModel = "gemini-2.5-flash", 
     fallbackModel = "gemini-3-pro-preview"
 ): Promise<any> => {
     const ai = new GoogleGenAI({ apiKey });
 
-    // Retry Logic with Delay
-    const callModel = async (model: string, retries: number): Promise<any> => {
+    // Recursive Retry Logic
+    const callModel = async (model: string, attemptsLeft: number, delayMs: number): Promise<any> => {
         try {
+            console.log(`Calling ${model}... Attempts left: ${attemptsLeft}`);
             const response = await ai.models.generateContent({
                 model: model,
                 contents: params.contents,
@@ -168,39 +87,32 @@ const generateWithFallback = async (
                     responseMimeType: "application/json",
                     responseSchema: params.schema,
                     temperature: 0.1,
-                    // Note: Removing maxOutputTokens helps prevent premature truncation
                 }
             });
             return response;
         } catch (error: any) {
-            if (retries > 0) {
-                // If it's a quota/busy error, wait longer (4-5s). Otherwise wait short (2s).
-                const isRateLimit = isQuotaError(error);
-                const waitTime = isRateLimit ? 4500 : 2000;
-                
-                console.warn(`Model ${model} failed (RateLimit: ${isRateLimit}). Retrying in ${waitTime}ms... (${retries} attempts left).`);
-                
-                await new Promise(r => setTimeout(r, waitTime));
-                return callModel(model, retries - 1);
+            if (attemptsLeft > 0 && isQuotaError(error)) {
+                console.warn(`Rate Limit Hit (${model}). Waiting ${delayMs}ms...`);
+                await new Promise(r => setTimeout(r, delayMs));
+                // Exponential Backoff: 2s -> 4s -> 8s -> 16s
+                return callModel(model, attemptsLeft - 1, delayMs * 2);
             }
             throw error;
         }
     };
 
     try {
-        console.log(`Attempting with primary model: ${primaryModel}`);
-        // 1. Try Primary Model with 2 retries (Total ~10s effort)
-        return await callModel(primaryModel, 2);
+        // Try Primary Model (Flash) - 3 Retries (2s, 4s, 8s)
+        return await callModel(primaryModel, 3, 2000);
     } catch (error: any) {
-        console.warn(`Primary model ${primaryModel} failed. Switching to fallback: ${fallbackModel}.`);
+        console.warn(`Primary model ${primaryModel} exhausted. Switching to ${fallbackModel}.`);
         
-        // 2. Try Fallback Model with 1 retry (Total ~5s effort)
+        // Try Fallback Model (Pro) - 2 Retries (4s, 8s)
         try {
-            return await callModel(fallbackModel, 1);
+            return await callModel(fallbackModel, 2, 4000);
         } catch (fallbackError: any) {
             if (isQuotaError(fallbackError)) {
-                // User-friendly error message for 429
-                throw new Error("Google AI servers are currently busy (429). Please wait 30 seconds and try again.");
+                throw new Error("429_BUSY"); // Specific code for App.tsx to handle
             }
             throw fallbackError;
         }
@@ -600,8 +512,6 @@ export const generateSchedule = async (
         Do not output Markdown code blocks. Keep descriptions concise.
     `;
 
-    // CALL AI WITH FALLBACK LOGIC
-    // Using Flash as primary for speed and quota limits
     const response = await generateWithFallback(apiKey, {
         systemInstruction,
         contents: [{ role: "user", parts: parts }],
@@ -909,8 +819,6 @@ export const generateTakeoff = async (
     Ensure all fields have proper values. Do not use incomplete JSON structure like "key": or "key": }. Use null if value is missing.
   `;
 
-  // CALL AI WITH FALLBACK LOGIC
-  // Using Flash as primary for speed and quota limits
   const response = await generateWithFallback(apiKey, {
         systemInstruction,
         contents: [{ role: "user", parts: parts }],

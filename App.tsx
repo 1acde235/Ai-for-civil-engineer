@@ -14,7 +14,7 @@ import { ChatSupport } from './components/ChatSupport';
 import { MarketingGenerator } from './components/MarketingGenerator'; // Import
 import { generateTakeoff, generateSchedule, FileInput } from './services/geminiService';
 import { AppState, TakeoffResult, UploadedFile, AppMode } from './types';
-import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft, RotateCw, Settings, PlayCircle } from 'lucide-react';
+import { Wallet, CheckCircle, Phone, Shield, FileText, Mail, Calculator, FileCheck, ArrowRight, ChevronLeft, BookOpen, CalendarClock, ArrowLeft, RotateCw, Settings, PlayCircle, Loader2 } from 'lucide-react';
 import { Logo } from './components/Logo';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -91,6 +91,8 @@ const App: React.FC = () => {
 
   // STORE LAST CONFIGURATION FOR QUICK RESCHEDULE
   const [lastAnalysisConfig, setLastAnalysisConfig] = useState<any>(null);
+  // Auto-Retry Countdown State
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
   useEffect(() => {
     localStorage.setItem('constructAi_credits', credits.toString());
@@ -148,6 +150,19 @@ const App: React.FC = () => {
           setShowSettings(true);
       }
   }, [appState]);
+
+  // AUTO RETRY TIMER LOGIC
+  useEffect(() => {
+      if (retryCountdown === null) return;
+      if (retryCountdown > 0) {
+          const timer = setTimeout(() => setRetryCountdown(retryCountdown - 1), 1000);
+          return () => clearTimeout(timer);
+      } else {
+          // Timer hit 0, trigger retry
+          handleRetryAnalysis();
+          setRetryCountdown(null);
+      }
+  }, [retryCountdown]);
 
   const verifySignedCode = (code: string): number | null => {
     try {
@@ -598,7 +613,15 @@ const App: React.FC = () => {
       console.error(err);
       // Ensure errMsg is a string
       const errMsg = (err.message && typeof err.message === 'string') ? err.message : JSON.stringify(err);
-      setError(errMsg);
+      
+      // RATE LIMIT / 429 HANDLING
+      if (errMsg.includes("429") || errMsg.includes("busy") || errMsg.includes("quota")) {
+          // Trigger Auto-Retry Countdown
+          setRetryCountdown(15); 
+          setError("Server Busy. Retrying automatically...");
+      } else {
+          setError(errMsg);
+      }
       
       // CRITICAL FIX: If API key is missing, go to error state directly to show button
       if (errMsg.includes("API Key") || errMsg.includes("API_KEY")) {
@@ -665,6 +688,7 @@ const App: React.FC = () => {
 
   // RETRY WITHOUT RE-UPLOAD LOGIC
   const handleRetryAnalysis = () => {
+      setRetryCountdown(null); // Clear auto timer if manually clicked
       if (lastAnalysisConfig) {
           handleStartAnalysis(
               lastAnalysisConfig.instructions,
@@ -994,27 +1018,44 @@ const App: React.FC = () => {
              </div>
              <h3 className="text-xl font-bold text-slate-800 mb-2">Analysis Failed</h3>
              <p className="text-slate-500 max-w-md mb-6">{error || "An unexpected error occurred."}</p>
-             <div className="flex flex-col space-y-3">
-                 <div className="flex space-x-3 justify-center">
-                    <button onClick={() => setAppState(AppState.UPLOAD)} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-2 rounded-lg font-bold">New Upload</button>
-                    {lastAnalysisConfig && (
-                        <button onClick={handleRetryAnalysis} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700 shadow-md flex items-center">
-                            <RotateCw className="w-4 h-4 mr-2" /> Retry Analysis
-                        </button>
-                    )}
-                    {(error?.includes("API_KEY") || error?.includes("API Key")) && (
-                        <button onClick={() => setShowSettings(true)} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700">Enter API Key</button>
-                    )}
+             
+             {/* RETRY COUNTDOWN UI FOR 429 ERRORS */}
+             {retryCountdown !== null ? (
+                 <div className="mb-6 flex flex-col items-center animate-in fade-in">
+                     <div className="w-12 h-12 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin mb-3"></div>
+                     <p className="text-brand-600 font-bold text-sm">
+                         Auto-retrying in {retryCountdown}s...
+                     </p>
+                     <button 
+                        onClick={() => setRetryCountdown(null)} 
+                        className="text-xs text-slate-400 mt-2 underline hover:text-slate-600"
+                     >
+                        Cancel Auto-Retry
+                     </button>
                  </div>
-                 
-                 <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 mt-2">
-                     or continue with demo data
+             ) : (
+                 <div className="flex flex-col space-y-3">
+                     <div className="flex space-x-3 justify-center">
+                        <button onClick={() => setAppState(AppState.UPLOAD)} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-2 rounded-lg font-bold">New Upload</button>
+                        {lastAnalysisConfig && (
+                            <button onClick={handleRetryAnalysis} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700 shadow-md flex items-center">
+                                <RotateCw className="w-4 h-4 mr-2" /> Retry Now
+                            </button>
+                        )}
+                        {(error?.includes("API_KEY") || error?.includes("API Key")) && (
+                            <button onClick={() => setShowSettings(true)} className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-brand-700">Enter API Key</button>
+                        )}
+                     </div>
+                     
+                     <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 mt-2">
+                         or continue with demo data
+                     </div>
+                     
+                     <button onClick={handleTryDemo} className="text-brand-600 hover:text-brand-700 text-sm font-bold flex items-center justify-center">
+                         <PlayCircle className="w-4 h-4 mr-2" /> Load Sample Project
+                     </button>
                  </div>
-                 
-                 <button onClick={handleTryDemo} className="text-brand-600 hover:text-brand-700 text-sm font-bold flex items-center justify-center">
-                     <PlayCircle className="w-4 h-4 mr-2" /> Load Sample Project
-                 </button>
-             </div>
+             )}
           </div>
         )}
       </main>
